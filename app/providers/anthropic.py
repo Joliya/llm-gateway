@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.providers.base import ProviderAdapter, UpstreamRequest, Usage
+from app.transform.reasoning import anthropic_thinking, peek_effort
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -68,6 +69,17 @@ class AnthropicAdapter(ProviderAdapter):
         if params.get("stop") is not None:
             stop = params["stop"]
             body["stop_sequences"] = [stop] if isinstance(stop, str) else stop
+
+        thinking = anthropic_thinking(peek_effort(params))
+        if thinking is not None:
+            body["thinking"] = thinking
+            # Extended thinking requires max_tokens to exceed the thinking budget,
+            # and forbids sampling overrides (temperature must be the default 1).
+            needed = thinking["budget_tokens"] + DEFAULT_MAX_TOKENS
+            if body["max_tokens"] < needed:
+                body["max_tokens"] = needed
+            for unsupported in ("temperature", "top_p", "top_k"):
+                body.pop(unsupported, None)
         return body
 
     def build_chat_request(self, *, base_url, api_key, org, extra_headers, upstream_model, params):

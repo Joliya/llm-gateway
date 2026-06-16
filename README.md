@@ -88,6 +88,9 @@ curl localhost:8000/v1/chat/completions \
 
 `model` accepts either a configured **alias** or a **`provider/model`** prefix.
 
+> 📖 完整使用文档（管理 API 接入、OpenAI SDK 客户端接入、UI 配置负载均衡）见
+> [`docs/USAGE.md`](docs/USAGE.md)。
+
 ## Production
 
 - Set `GW_DATABASE_URL=postgresql+asyncpg://…` and `GW_REDIS_URL=redis://…`.

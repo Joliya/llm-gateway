@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.providers.base import ProviderAdapter, UpstreamRequest, Usage
+from app.transform.reasoning import apply_openai_compat
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
@@ -27,6 +28,7 @@ class OpenAICompatAdapter(ProviderAdapter):
     def build_chat_request(self, *, base_url, api_key, org, extra_headers, upstream_model, params):
         body = dict(params)
         body["model"] = upstream_model
+        apply_openai_compat(body, base_url)
         base = (base_url or DEFAULT_BASE_URL).rstrip("/")
         return UpstreamRequest(
             method="POST",

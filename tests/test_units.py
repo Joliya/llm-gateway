@@ -67,3 +67,109 @@ def test_circuit_broken_moved_to_back():
     ordered = order_deployments("alias-cb", deps, "round_robin")
     assert ordered[-1].deployment_id == 10  # broken one is last
     circuit_breaker.record_success(10)
+
+
+# --- cross-provider reasoning / thinking mapping ---
+
+from app.providers.anthropic import AnthropicAdapter
+from app.providers.gemini import GeminiAdapter
+from app.providers.openai_compat import OpenAICompatAdapter
+from app.transform.reasoning import (
+    detect_openai_dialect,
+    normalize_level,
+)
+
+
+def _chat(adapter, base_url, params):
+    return adapter.build_chat_request(
+        base_url=base_url, api_key="k", org=None, extra_headers={},
+        upstream_model="m", params=params,
+    ).json
+
+
+def test_normalize_level():
+    assert normalize_level("high") == "high"
+    assert normalize_level("HIGH") == "high"
+    assert normalize_level(True) == "medium"
+    assert normalize_level(False) == "none"
+    assert normalize_level("off") == "none"
+    assert normalize_level("default") == "medium"
+    assert normalize_level("weird") == "medium"
+    assert normalize_level(None) is None
+
+
+def test_dialect_detection():
+    assert detect_openai_dialect("https://dashscope.aliyuncs.com/compatible-mode/v1") == "qwen"
+    assert detect_openai_dialect("https://api.deepseek.com/v1") == "deepseek"
+    assert detect_openai_dialect("https://api.moonshot.cn/v1") == "kimi"
+    assert detect_openai_dialect("https://api.openai.com/v1") == "openai"
+    assert detect_openai_dialect(None) == "openai"
+
+
+def test_openai_keeps_reasoning_effort():
+    body = _chat(OpenAICompatAdapter(), "https://api.openai.com/v1",
+                 {"messages": [], "reasoning_effort": "high"})
+    assert body["reasoning_effort"] == "high"
+
+
+def test_qwen_maps_to_enable_thinking():
+    body = _chat(OpenAICompatAdapter(), "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 {"messages": [], "reasoning_effort": "low"})
+    assert "reasoning_effort" not in body
+    assert body["enable_thinking"] is True
+    assert body["thinking_budget"] > 0
+    off = _chat(OpenAICompatAdapter(), "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                {"messages": [], "reasoning_effort": "none"})
+    assert off["enable_thinking"] is False
+
+
+def test_deepseek_maps_to_thinking_toggle():
+    on = _chat(OpenAICompatAdapter(), "https://api.deepseek.com/v1",
+               {"messages": [], "reasoning_effort": "low"})
+    assert on["thinking"] == {"type": "enabled"}
+    assert on["reasoning_effort"] == "high"            # DeepSeek floors to high
+    mx = _chat(OpenAICompatAdapter(), "https://api.deepseek.com/v1",
+               {"messages": [], "reasoning_effort": "max"})
+    assert mx["reasoning_effort"] == "max"
+    off = _chat(OpenAICompatAdapter(), "https://api.deepseek.com/v1",
+                {"messages": [], "reasoning_effort": "none"})
+    assert off["thinking"] == {"type": "disabled"}
+
+
+def test_kimi_drops_field():
+    body = _chat(OpenAICompatAdapter(), "https://api.moonshot.cn/v1",
+                 {"messages": [], "reasoning_effort": "high"})
+    assert "reasoning_effort" not in body
+    assert "thinking" not in body
+
+
+def test_openai_clamps_max_to_high():
+    body = _chat(OpenAICompatAdapter(), "https://api.openai.com/v1",
+                 {"messages": [], "reasoning_effort": "max"})
+    assert body["reasoning_effort"] == "high"
+
+
+def test_anthropic_maps_to_thinking_block():
+    body = _chat(AnthropicAdapter(), None,
+                 {"messages": [{"role": "user", "content": "hi"}],
+                  "temperature": 0.7, "reasoning_effort": "high"})
+    assert body["thinking"]["type"] == "enabled"
+    assert body["thinking"]["budget_tokens"] > 0
+    assert body["max_tokens"] > body["thinking"]["budget_tokens"]
+    assert "temperature" not in body  # forbidden alongside thinking
+
+
+def test_anthropic_no_thinking_when_off():
+    body = _chat(AnthropicAdapter(), None,
+                 {"messages": [{"role": "user", "content": "hi"}], "temperature": 0.7})
+    assert "thinking" not in body
+    assert body["temperature"] == 0.7
+
+
+def test_gemini_maps_to_thinking_config():
+    body = _chat(GeminiAdapter(), None,
+                 {"messages": [{"role": "user", "content": "hi"}], "reasoning_effort": "medium"})
+    assert body["generationConfig"]["thinkingConfig"]["thinkingBudget"] > 0
+    off = _chat(GeminiAdapter(), None,
+                {"messages": [{"role": "user", "content": "hi"}], "reasoning_effort": "none"})
+    assert off["generationConfig"]["thinkingConfig"]["thinkingBudget"] == 0

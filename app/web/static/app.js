@@ -37,6 +37,7 @@ const I18N = {
     "Master key": "主密钥", "Connect": "连接",
     // modal
     "Cancel": "取消", "Save": "保存", "Done": "完成", "Copy": "复制",
+    "Discard unsaved changes?": "放弃未保存的修改吗？",
     "new": "新建", "edit": "编辑", "secret": "密钥",
     "New {x}": "新建{x}", "Edit {x}": "编辑{x}", "Virtual key created": "虚拟密钥已创建",
     "+ New {x}": "+ 新建{x}",
@@ -684,6 +685,7 @@ async function renderPlayground(content, crumb) {
 
 // ------------------------------------------------------------------ modal / forms
 let modalState = null;
+let modalDirty = false;
 
 function fieldControl(f, value) {
   const id = "f_" + f.name;
@@ -741,6 +743,7 @@ function openModal(route, record) {
     form.append(fieldControl(f, val));
   }
   $("#modal-scrim").hidden = false;
+  modalDirty = false;
   const first = form.querySelector("input, select, textarea");
   if (first) first.focus();
 }
@@ -748,6 +751,14 @@ function openModal(route, record) {
 function closeModal() {
   $("#modal-scrim").hidden = true;
   modalState = null;
+  modalDirty = false;
+}
+
+// Guarded close: only confirm when the form has unsaved edits, so accidental
+// backdrop clicks / Escape don't silently throw away work.
+function requestCloseModal() {
+  if (modalDirty && !window.confirm(t("Discard unsaved changes?"))) return;
+  closeModal();
 }
 
 function collectForm() {
@@ -886,11 +897,23 @@ function wire() {
   });
   window.addEventListener("hashchange", () => { if (!$("#app").hidden) renderView(location.hash.slice(1) || "overview"); });
 
-  $("#modal-close").addEventListener("click", closeModal);
-  $("#modal-cancel").addEventListener("click", closeModal);
+  $("#modal-close").addEventListener("click", requestCloseModal);
+  $("#modal-cancel").addEventListener("click", requestCloseModal);
   $("#modal-form").addEventListener("submit", submitModal);
-  $("#modal-scrim").addEventListener("click", (e) => { if (e.target.id === "modal-scrim") closeModal(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#modal-scrim").hidden) closeModal(); });
+  // Mark the form dirty on any edit so the guard knows there's work to protect.
+  $("#modal-form").addEventListener("input", () => { modalDirty = true; });
+  $("#modal-form").addEventListener("change", () => { modalDirty = true; });
+
+  // Backdrop dismiss: require the press AND release to land on the scrim itself,
+  // so dragging/selecting text inside a field and releasing outside never closes.
+  let scrimPressTarget = null;
+  $("#modal-scrim").addEventListener("mousedown", (e) => { scrimPressTarget = e.target; });
+  $("#modal-scrim").addEventListener("click", (e) => {
+    const pressedScrim = scrimPressTarget && scrimPressTarget.id === "modal-scrim";
+    scrimPressTarget = null;
+    if (e.target.id === "modal-scrim" && pressedScrim) requestCloseModal();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#modal-scrim").hidden) requestCloseModal(); });
 
   document.querySelectorAll(".lang-select").forEach((sel) => sel.addEventListener("change", (e) => setLang(e.target.value)));
 }

@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.providers.base import ProviderAdapter, UpstreamRequest, Usage
+from app.transform.reasoning import gemini_thinking_config, peek_effort
 
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 
@@ -38,7 +39,10 @@ def _candidate_text(data: dict[str, Any]) -> str:
     if not cands:
         return ""
     parts = cands[0].get("content", {}).get("parts", []) or []
-    return "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+    # Skip thought parts so reasoning never leaks into the answer content.
+    return "".join(
+        p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought")
+    )
 
 
 class GeminiAdapter(ProviderAdapter):
@@ -67,6 +71,11 @@ class GeminiAdapter(ProviderAdapter):
         if params.get("stop") is not None:
             stop = params["stop"]
             gen_config["stopSequences"] = [stop] if isinstance(stop, str) else stop
+
+        thinking_config = gemini_thinking_config(peek_effort(params))
+        if thinking_config is not None:
+            gen_config["thinkingConfig"] = thinking_config
+
         if gen_config:
             body["generationConfig"] = gen_config
         return body
