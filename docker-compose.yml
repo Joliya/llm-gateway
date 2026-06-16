@@ -1,0 +1,52 @@
+services:
+  gateway:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # REQUIRED: set these in a .env file next to this compose file.
+      GW_MASTER_KEY: ${GW_MASTER_KEY:?set GW_MASTER_KEY in .env}
+      GW_ENCRYPTION_KEY: ${GW_ENCRYPTION_KEY:?set GW_ENCRYPTION_KEY in .env}
+      GW_DATABASE_URL: postgresql+asyncpg://gw:gw@db:5432/llm_gateway
+      GW_REDIS_URL: redis://redis:6379/0
+      # Migrations (run by the entrypoint) own the schema in production.
+      GW_AUTO_CREATE_TABLES: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gw
+      POSTGRES_PASSWORD: gw
+      POSTGRES_DB: llm_gateway
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gw -d llm_gateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

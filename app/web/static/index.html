@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>llm-gateway · console</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <!-- Login -->
+  <div id="login" class="login" hidden>
+    <form class="login-card" id="login-form">
+      <div class="login-mark">
+        <span class="dot"></span>
+        <span class="wordmark">LLM<b>GATEWAY</b></span>
+      </div>
+      <p class="login-sub" data-i18n="Signal router console — authenticate with the master key.">Signal router console — authenticate with the master key.</p>
+      <label class="field">
+        <span class="field-label" data-i18n="Master key">Master key</span>
+        <input type="password" id="master-key" autocomplete="off" placeholder="GW_MASTER_KEY" required />
+      </label>
+      <button class="btn btn-signal" type="submit" data-i18n="Connect">Connect</button>
+      <p class="login-err" id="login-err" hidden></p>
+      <div class="login-lang">
+        <select class="lang-select" aria-label="Language">
+          <option value="en">EN</option>
+          <option value="zh">中文</option>
+        </select>
+      </div>
+    </form>
+  </div>
+
+  <!-- App -->
+  <div id="app" class="app" hidden>
+    <aside class="rail">
+      <div class="rail-mark">
+        <span class="dot"></span>
+        <span class="wordmark">LLM<b>GATEWAY</b></span>
+      </div>
+      <nav class="rail-nav" id="nav">
+        <a data-route="overview" class="nav-item"><span class="nav-idx">00</span><span data-i18n="Overview">Overview</span></a>
+        <a data-route="providers" class="nav-item"><span class="nav-idx">01</span><span data-i18n="Providers">Providers</span></a>
+        <a data-route="credentials" class="nav-item"><span class="nav-idx">02</span><span data-i18n="Credentials">Credentials</span></a>
+        <a data-route="aliases" class="nav-item"><span class="nav-idx">03</span><span data-i18n="Aliases">Aliases</span></a>
+        <a data-route="deployments" class="nav-item"><span class="nav-idx">04</span><span data-i18n="Deployments">Deployments</span></a>
+        <a data-route="keys" class="nav-item"><span class="nav-idx">05</span><span data-i18n="Virtual keys">Virtual keys</span></a>
+        <a data-route="logs" class="nav-item"><span class="nav-idx">06</span><span data-i18n="Traffic">Traffic</span></a>
+        <a data-route="playground" class="nav-item"><span class="nav-idx">07</span><span data-i18n="Playground">Playground</span></a>
+      </nav>
+      <div class="rail-foot">
+        <select class="lang-select" aria-label="Language">
+          <option value="en">EN</option>
+          <option value="zh">中文</option>
+        </select>
+        <button class="btn btn-ghost" id="signout" data-i18n="Sign out">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <header class="topbar">
+        <div class="crumbs"><span id="crumb-section">overview</span></div>
+        <div class="status" id="status">
+          <span class="status-dot"></span>
+          <span id="status-text">connected</span>
+        </div>
+      </header>
+      <section class="content" id="content"><!-- view rendered here --></section>
+    </main>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-scrim" id="modal-scrim" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <header class="modal-head">
+        <span class="eyebrow" id="modal-eyebrow">new</span>
+        <h2 id="modal-title">Record</h2>
+        <button class="modal-x" id="modal-close" aria-label="Close">✕</button>
+      </header>
+      <form id="modal-form" class="modal-form"><!-- fields injected --></form>
+      <footer class="modal-foot">
+        <span class="modal-err" id="modal-err" hidden></span>
+        <button class="btn btn-ghost" id="modal-cancel" type="button" data-i18n="Cancel">Cancel</button>
+        <button class="btn btn-signal" id="modal-save" type="submit" form="modal-form" data-i18n="Save">Save</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
