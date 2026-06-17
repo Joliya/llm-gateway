@@ -55,6 +55,9 @@ class Snapshot:
     # provider name -> (provider_type, default_base_url, [credentials])
     providers_by_name: dict[str, Provider]
     provider_creds: dict[int, list[Credential]]
+    # (provider_id, upstream_model) -> (input_price, output_price); lets prefix
+    # routes inherit pricing configured on any deployment for that model.
+    model_prices: dict[tuple[int, str], tuple[float, float]]
     loaded_at: float
 
 
@@ -99,8 +102,25 @@ class ConfigStore:
 
         resolved_aliases: dict[str, ResolvedAlias] = {}
         deps_by_alias: dict[int, list[Deployment]] = {}
+        # (provider_id, model) -> (input, output). Provider price books seed the
+        # base prices (so deployment-less prefix routes are still costed); a
+        # Deployment's own non-zero price overrides the book for that model.
+        model_prices: dict[tuple[int, str], tuple[float, float]] = {}
+        for p in providers:
+            for model_name, prices in (p.model_prices or {}).items():
+                if not isinstance(prices, dict):
+                    continue
+                model_prices[(p.id, model_name)] = (
+                    float(prices.get("input", 0.0) or 0.0),
+                    float(prices.get("output", 0.0) or 0.0),
+                )
         for d in deployments:
             deps_by_alias.setdefault(d.alias_id, []).append(d)
+            cred = cred_by_id.get(d.credential_id)
+            if cred is not None and (d.input_price or d.output_price):
+                model_prices[(cred.provider_id, d.upstream_model)] = (
+                    d.input_price, d.output_price
+                )
 
         for a in aliases:
             if not a.enabled:
@@ -129,6 +149,7 @@ class ConfigStore:
             aliases=resolved_aliases,
             providers_by_name=providers_by_name,
             provider_creds=provider_creds,
+            model_prices=model_prices,
             loaded_at=time.monotonic(),
         )
 

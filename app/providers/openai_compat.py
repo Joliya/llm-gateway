@@ -29,6 +29,13 @@ class OpenAICompatAdapter(ProviderAdapter):
         body = dict(params)
         body["model"] = upstream_model
         apply_openai_compat(body, base_url)
+        # Streaming responses omit token usage unless explicitly requested, which
+        # would leave cost/usage logged as 0. Ask for the trailing usage chunk
+        # (the executor already parses it) without clobbering a client's own opts.
+        if body.get("stream"):
+            opts = dict(body.get("stream_options") or {})
+            opts.setdefault("include_usage", True)
+            body["stream_options"] = opts
         base = (base_url or DEFAULT_BASE_URL).rstrip("/")
         return UpstreamRequest(
             method="POST",

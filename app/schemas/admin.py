@@ -11,6 +11,8 @@ class ProviderCreate(BaseModel):
     name: str
     provider_type: str = Field(description="openai_compat | anthropic | gemini")
     default_base_url: Optional[str] = None
+    # Price book for prefix routing: {"gpt-4o": {"input": 2.5, "output": 10}}
+    model_prices: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
 
 
@@ -18,6 +20,7 @@ class ProviderUpdate(BaseModel):
     name: Optional[str] = None
     provider_type: Optional[str] = None
     default_base_url: Optional[str] = None
+    model_prices: Optional[dict[str, Any]] = None
     enabled: Optional[bool] = None
 
 
@@ -27,6 +30,7 @@ class ProviderOut(BaseModel):
     name: str
     provider_type: str
     default_base_url: Optional[str]
+    model_prices: dict[str, Any]
     enabled: bool
 
 

@@ -1,12 +1,25 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.config_store import ResolvedDeployment
 from app.db.models import RequestLog
 from app.providers.base import Usage
+
+_settings = get_settings()
+
+
+def _capture(value: Any) -> Any:
+    """Honor the GW_LOG_UPSTREAM_IO toggle and cap oversized string payloads."""
+    if not _settings.log_upstream_io or value is None:
+        return None
+    cap = _settings.log_upstream_max_chars
+    if cap and isinstance(value, str) and len(value) > cap:
+        return value[:cap] + f"\n…[truncated {len(value) - cap} chars]"
+    return value
 
 
 async def log_request(
@@ -22,6 +35,9 @@ async def log_request(
     retries: int,
     cache_hit: bool = False,
     error: Optional[str] = None,
+    upstream_url: Optional[str] = None,
+    upstream_request: Optional[dict[str, Any]] = None,
+    upstream_response: Any = None,
 ) -> None:
     usage = usage or Usage()
     log = RequestLog(
@@ -39,6 +55,9 @@ async def log_request(
         retries=retries,
         cache_hit=cache_hit,
         error=error,
+        upstream_url=upstream_url,
+        upstream_request=_capture(upstream_request),
+        upstream_response=_capture(upstream_response),
     )
     session.add(log)
     await session.flush()

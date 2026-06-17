@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     # Config snapshot TTL: how long the router caches DB config in memory.
     config_cache_ttl_seconds: float = 5.0
 
+    # --- Observability ---
+    # Capture the exact JSON body sent to the provider and the raw upstream
+    # response in each request log. Lets you verify param translation (e.g. that
+    # the right thinking/reasoning fields were sent). Bodies include prompt
+    # content, so disable if that is a privacy concern.
+    log_upstream_io: bool = True
+    # Cap stored upstream response strings to this many chars (0 = unlimited).
+    log_upstream_max_chars: int = 20000
+
 
 @lru_cache
 def get_settings() -> Settings:

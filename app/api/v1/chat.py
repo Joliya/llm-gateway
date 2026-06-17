@@ -73,9 +73,11 @@ async def chat_completions(
         result = await executor.run(aliases, body)
     except AllAttemptsFailed as exc:
         await log_request(
-            session, virtual_key_id=vk.id, requested_model=model, deployment=None, usage=Usage(),
+            session, virtual_key_id=vk.id, requested_model=model, deployment=exc.deployment, usage=Usage(),
             status=exc.status_code, cost=0.0,
             latency_ms=int((time.monotonic() - started) * 1000), retries=0, error=exc.body[:1000],
+            upstream_url=exc.upstream_url, upstream_request=exc.upstream_request,
+            upstream_response=exc.upstream_response,
         )
         await session.commit()
         return JSONResponse(
@@ -89,6 +91,8 @@ async def chat_completions(
         session, virtual_key_id=vk.id, requested_model=model, deployment=result.deployment,
         usage=result.usage, status=200, cost=cost,
         latency_ms=int((time.monotonic() - started) * 1000), retries=result.retries,
+        upstream_url=result.upstream_url, upstream_request=result.upstream_request,
+        upstream_response=result.upstream_response,
     )
     await session.commit()
 
@@ -103,9 +107,11 @@ async def _stream_response(executor, aliases, body, model, vk, session, started)
         stream_result = await executor.run_stream(aliases, body)
     except AllAttemptsFailed as exc:
         await log_request(
-            session, virtual_key_id=vk.id, requested_model=model, deployment=None, usage=Usage(),
+            session, virtual_key_id=vk.id, requested_model=model, deployment=exc.deployment, usage=Usage(),
             status=exc.status_code, cost=0.0,
             latency_ms=int((time.monotonic() - started) * 1000), retries=0, error=exc.body[:1000],
+            upstream_url=exc.upstream_url, upstream_request=exc.upstream_request,
+            upstream_response=exc.upstream_response,
         )
         await session.commit()
         return JSONResponse(
@@ -130,6 +136,8 @@ async def _stream_response(executor, aliases, body, model, vk, session, started)
                 deployment=stream_result.deployment, usage=stream_result.usage, status=200,
                 cost=cost, latency_ms=int((time.monotonic() - started) * 1000),
                 retries=stream_result.retries,
+                upstream_url=stream_result.upstream_url, upstream_request=stream_result.upstream_request,
+                upstream_response="[streamed]",
             )
             await session.commit()
 

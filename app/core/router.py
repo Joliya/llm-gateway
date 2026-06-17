@@ -24,6 +24,9 @@ def _synthetic_alias_from_prefix(snapshot: Snapshot, provider_name: str, model: 
         raise RouteNotFound(f"Provider {provider_name!r} has no enabled credentials")
 
     alias_name = f"{provider_name}/{model}"
+    # Inherit pricing from any deployment configured for this provider+model,
+    # so prefix-routed calls are costed too (0.0 when none is configured).
+    input_price, output_price = snapshot.model_prices.get((provider.id, model), (0.0, 0.0))
     ra = ResolvedAlias(name=alias_name, lb_strategy="round_robin", fallback_aliases=[], cache_enabled=None)
     for cred in creds:
         ra.deployments.append(
@@ -45,8 +48,8 @@ def _synthetic_alias_from_prefix(snapshot: Snapshot, provider_name: str, model: 
                 pinned_params={},
                 default_params={},
                 drop_params=[],
-                input_price=0.0,
-                output_price=0.0,
+                input_price=input_price,
+                output_price=output_price,
             )
         )
     return ra

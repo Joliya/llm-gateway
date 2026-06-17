@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,9 +37,32 @@ async def list_logs(
             "completion_tokens": r.completion_tokens, "total_tokens": r.total_tokens,
             "cost": r.cost, "latency_ms": r.latency_ms, "retries": r.retries,
             "cache_hit": r.cache_hit, "error": r.error,
+            "upstream_url": r.upstream_url,
+            # Bodies can be large; the list flags their presence, the detail
+            # endpoint (`GET /admin/logs/{id}`) returns them in full.
+            "has_upstream_io": r.upstream_request is not None or r.upstream_response is not None,
         }
         for r in rows
     ]
+
+
+@router.get("/logs/{log_id}")
+async def get_log(log_id: int, session: AsyncSession = Depends(get_session)):
+    r = await session.get(RequestLog, log_id)
+    if r is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Log not found")
+    return {
+        "id": r.id, "ts": r.ts, "virtual_key_id": r.virtual_key_id,
+        "requested_model": r.requested_model, "alias": r.alias,
+        "deployment_id": r.deployment_id, "provider_type": r.provider_type,
+        "status": r.status, "prompt_tokens": r.prompt_tokens,
+        "completion_tokens": r.completion_tokens, "total_tokens": r.total_tokens,
+        "cost": r.cost, "latency_ms": r.latency_ms, "retries": r.retries,
+        "cache_hit": r.cache_hit, "error": r.error,
+        "upstream_url": r.upstream_url,
+        "upstream_request": r.upstream_request,
+        "upstream_response": r.upstream_response,
+    }
 
 
 @router.get("/usage")

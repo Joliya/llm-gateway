@@ -30,10 +30,16 @@ class UpstreamError(Exception):
 
 
 class AllAttemptsFailed(Exception):
-    def __init__(self, status_code: int, body: str):
+    def __init__(self, status_code: int, body: str, *, deployment: Optional[ResolvedDeployment] = None,
+                 upstream_url: Optional[str] = None, upstream_request: Optional[dict[str, Any]] = None,
+                 upstream_response: Any = None):
         super().__init__(body)
         self.status_code = status_code
         self.body = body
+        self.deployment = deployment
+        self.upstream_url = upstream_url
+        self.upstream_request = upstream_request
+        self.upstream_response = upstream_response
 
 
 @dataclass
@@ -42,6 +48,9 @@ class ChatResult:
     deployment: ResolvedDeployment
     usage: Usage
     retries: int
+    upstream_url: Optional[str] = None
+    upstream_request: Optional[dict[str, Any]] = None
+    upstream_response: Any = None
 
 
 @dataclass
@@ -51,6 +60,8 @@ class StreamResult:
     # usage is populated as the stream is consumed
     usage: Usage = field(default_factory=Usage)
     retries: int = 0
+    upstream_url: Optional[str] = None
+    upstream_request: Optional[dict[str, Any]] = None
 
 
 async def build_candidate_aliases(session: AsyncSession, model: str) -> list[ResolvedAlias]:
@@ -128,6 +139,11 @@ class ChatExecutor:
     async def run(self, aliases: list[ResolvedAlias], body: dict[str, Any]) -> ChatResult:
         attempts = _iter_attempts(aliases)
         last_status, last_body = 502, "no upstream available"
+        # Track the most recent attempt's upstream I/O so failures are auditable too.
+        last_dep: Optional[ResolvedDeployment] = None
+        last_url: Optional[str] = None
+        last_req: Optional[dict[str, Any]] = None
+        last_resp: Any = None
         retries = 0
         for i, dep in enumerate(attempts):
             if i > 0:
@@ -143,6 +159,7 @@ class ChatExecutor:
                 base_url=dep.base_url, api_key=dep.api_key, org=dep.org,
                 extra_headers=dep.extra_headers, upstream_model=dep.upstream_model, params=params,
             )
+            last_dep, last_url, last_req, last_resp = dep, req.url, req.json, None
             incr_inflight(dep.deployment_id)
             try:
                 resp = await self.client.request(
@@ -151,11 +168,12 @@ class ChatExecutor:
                 )
             except httpx.HTTPError as exc:
                 circuit_breaker.record_failure(dep.deployment_id)
-                last_status, last_body = 502, f"connection error: {exc}"
+                last_status, last_body, last_resp = 502, f"connection error: {exc}", f"connection error: {exc}"
                 continue
             finally:
                 decr_inflight(dep.deployment_id)
 
+            last_resp = resp.text
             if resp.status_code >= 400:
                 retryable = resp.status_code == 429 or resp.status_code >= 500
                 if retryable:
@@ -163,7 +181,10 @@ class ChatExecutor:
                     last_status, last_body = resp.status_code, resp.text
                     continue
                 # client error (4xx, non-429): surface immediately
-                raise AllAttemptsFailed(resp.status_code, resp.text)
+                raise AllAttemptsFailed(
+                    resp.status_code, resp.text, deployment=dep, upstream_url=req.url,
+                    upstream_request=req.json, upstream_response=resp.text,
+                )
 
             circuit_breaker.record_success(dep.deployment_id)
             data = resp.json()
@@ -172,14 +193,21 @@ class ChatExecutor:
             return ChatResult(
                 response=adapter.parse_chat_response(data),
                 deployment=dep, usage=usage, retries=retries,
+                upstream_url=req.url, upstream_request=req.json, upstream_response=data,
             )
 
-        raise AllAttemptsFailed(last_status, last_body)
+        raise AllAttemptsFailed(
+            last_status, last_body, deployment=last_dep, upstream_url=last_url,
+            upstream_request=last_req, upstream_response=last_resp,
+        )
 
     async def run_stream(self, aliases: list[ResolvedAlias], body: dict[str, Any]) -> StreamResult:
         """Open the upstream stream, falling back only until the first byte."""
         attempts = _iter_attempts(aliases)
         last_status, last_body = 502, "no upstream available"
+        last_dep: Optional[ResolvedDeployment] = None
+        last_url: Optional[str] = None
+        last_req: Optional[dict[str, Any]] = None
         retries = 0
         for i, dep in enumerate(attempts):
             if i > 0:
@@ -195,6 +223,7 @@ class ChatExecutor:
                 base_url=dep.base_url, api_key=dep.api_key, org=dep.org,
                 extra_headers=dep.extra_headers, upstream_model=dep.upstream_model, params=params,
             )
+            last_dep, last_url, last_req = dep, req.url, req.json
             cm = self.client.stream(
                 req.method, req.url, headers=req.headers, json=req.json,
                 timeout=_settings.request_timeout,
@@ -213,14 +242,21 @@ class ChatExecutor:
                     circuit_breaker.record_failure(dep.deployment_id)
                     last_status, last_body = resp.status_code, err_body
                     continue
-                raise AllAttemptsFailed(resp.status_code, err_body)
+                raise AllAttemptsFailed(
+                    resp.status_code, err_body, deployment=dep, upstream_url=req.url,
+                    upstream_request=req.json, upstream_response=err_body,
+                )
 
             circuit_breaker.record_success(dep.deployment_id)
-            result = StreamResult(chunks=None, deployment=dep, retries=retries)  # type: ignore
+            result = StreamResult(chunks=None, deployment=dep, retries=retries,  # type: ignore
+                                  upstream_url=req.url, upstream_request=req.json)
             result.chunks = self._consume_stream(cm, resp, adapter, dep, result)
             return result
 
-        raise AllAttemptsFailed(last_status, last_body)
+        raise AllAttemptsFailed(
+            last_status, last_body, deployment=last_dep, upstream_url=last_url,
+            upstream_request=last_req, upstream_response=last_body,
+        )
 
     async def _consume_stream(self, cm, resp, adapter, dep, result: StreamResult):
         incr_inflight(dep.deployment_id)

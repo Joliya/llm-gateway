@@ -61,6 +61,9 @@ const I18N = {
     "Balancing": "负载均衡", "Fallback": "降级", "Cache": "缓存",
     "Prefix": "前缀", "Allowed": "允许范围", "Spend / budget": "已花费 / 预算",
     "Upstream model": "上游模型", "In $/M": "输入 $/百万", "Out $/M": "输出 $/百万",
+    "Price book": "价目表",
+    "Per-1M-token prices for prefix routing (provider/model calls without a deployment), e.g. {\"gpt-4o\": {\"input\": 2.5, \"output\": 10}}.":
+      "用于前缀路由（无部署的 provider/model 调用）的每百万 token 单价，例如 {\"gpt-4o\": {\"input\": 2.5, \"output\": 10}}。",
     // descriptions
     "Upstream vendors. The name doubles as a routing prefix, e.g. calling openai/gpt-4o targets the openai provider.":
       "上游供应商。名称同时作为路由前缀，例如调用 openai/gpt-4o 会指向 openai 供应商。",
@@ -108,11 +111,15 @@ const I18N = {
     "{n} fails": "{n} 次失败", "Failures": "失败次数", "Cooldown": "冷却剩余",
     // logs
     "traffic": "流量", "Request log": "请求日志",
-    "Every proxied request, newest first — tokens, cost, latency, retries, and cache hits.":
-      "所有代理请求（最新在前）—— Token、成本、延迟、重试与缓存命中。",
+    "Every proxied request, newest first — tokens, cost, latency, retries, and cache hits. Click a row to inspect the exact request and response exchanged with the provider.":
+      "所有代理请求（最新在前）—— Token、成本、延迟、重试与缓存命中。点击某一行可查看与供应商之间实际收发的请求与响应。",
     "filter by alias": "按别名过滤", "Limit": "条数", "No requests match.": "没有匹配的请求。",
     "Time": "时间", "Status": "状态", "Alias / model": "别名 / 模型", "Provider": "供应商",
     "Latency": "延迟", "Retries": "重试", "hit": "命中",
+    "Inspect upstream request / response": "查看上游请求 / 响应",
+    "Request detail": "请求详情", "Sent to provider": "发送给供应商的内容",
+    "Provider response": "供应商响应", "No upstream body captured.": "未捕获上游内容。",
+    "Error": "错误",
     // playground
     "playground": "调试台", "Test bench": "测试台",
     "Send a request through the real routing path and see which deployment served it. Authenticated by the master key — virtual-key budgets and limits are bypassed.":
@@ -244,6 +251,7 @@ const SCHEMAS = {
       { name: "name", label: "Name", type: "text", required: true, hint: "Routing prefix, e.g. openai / kimi / deepseek." },
       { name: "provider_type", label: "Adapter type", type: "select", options: () => ref.providerTypes.map((x) => ({ value: x, label: x })) },
       { name: "default_base_url", label: "Default base URL", type: "text", hint: "Optional; credentials may override per key." },
+      { name: "model_prices", label: "Price book", type: "json", hint: "Per-1M-token prices for prefix routing (provider/model calls without a deployment), e.g. {\"gpt-4o\": {\"input\": 2.5, \"output\": 10}}." },
       { name: "enabled", label: "Enabled", type: "checkbox", default: true },
     ],
   },
@@ -542,7 +550,7 @@ async function renderLogs(content, crumb) {
     el("div", { class: "view-head" }, el("div", {},
       el("div", { class: "eyebrow" }, t("traffic")),
       el("h1", { class: "view-title" }, t("Request log")),
-      el("p", { class: "view-desc" }, t("Every proxied request, newest first — tokens, cost, latency, retries, and cache hits.")),
+      el("p", { class: "view-desc" }, t("Every proxied request, newest first — tokens, cost, latency, retries, and cache hits. Click a row to inspect the exact request and response exchanged with the provider.")),
     ))
   );
 
@@ -563,7 +571,7 @@ async function renderLogs(content, crumb) {
     const tb = el("tbody", {});
     for (const r of rows) {
       const ok = r.status === 200;
-      tb.append(el("tr", {},
+      tb.append(el("tr", { class: "log-row", title: t("Inspect upstream request / response"), onclick: () => showLogDetail(r.id) },
         el("td", { class: "cell-muted" }, new Date(r.ts).toLocaleString()),
         el("td", {}, el("span", { class: "pill " + (ok ? "on" : "err") }, String(r.status))),
         el("td", { class: "cell-strong" }, r.alias || r.requested_model),
@@ -589,6 +597,56 @@ async function renderLogs(content, crumb) {
   ));
   content.append(tableHost);
   await reload();
+}
+
+function _jsonBlock(value) {
+  if (value === null || value === undefined) {
+    return el("p", { class: "reveal-note" }, t("No upstream body captured."));
+  }
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return el("pre", { class: "io-block" }, text);
+}
+
+// Inspect a single request's exact upstream request/response — useful to verify
+// that params like the reasoning level were translated and sent correctly.
+async function showLogDetail(id) {
+  let r;
+  try { r = await api("GET", "/admin/logs/" + id); }
+  catch (e) { toast(e.message, true); return; }
+
+  resetModalChrome();
+  modalState = null;
+  modalDirty = false;
+  $("#modal-eyebrow").textContent = t("traffic");
+  $("#modal-title").textContent = t("Request detail");
+  const form = $("#modal-form");
+  form.innerHTML = "";
+  $("#modal-err").hidden = true;
+
+  const meta = el("div", { class: "io-meta" },
+    el("span", {}, (r.provider_type || "—") + " · " + (r.alias || r.requested_model)),
+    el("span", { class: "pill " + (r.status === 200 ? "on" : "err") }, String(r.status)),
+    el("span", { class: "cell-muted" }, (r.total_tokens || 0).toLocaleString() + " tok · " + fmt.money(r.cost) + " · " + (r.latency_ms || 0) + " ms"),
+  );
+  const sections = [
+    el("div", { class: "io-sec" }, el("div", { class: "io-label" }, t("Sent to provider")),
+      r.upstream_url ? el("div", { class: "io-url" }, r.upstream_url) : null,
+      _jsonBlock(r.upstream_request)),
+    el("div", { class: "io-sec" }, el("div", { class: "io-label" }, t("Provider response")),
+      _jsonBlock(r.upstream_response)),
+  ];
+  if (r.error) {
+    sections.push(el("div", { class: "io-sec" }, el("div", { class: "io-label" }, t("Error")),
+      el("pre", { class: "io-block io-err" }, r.error)));
+  }
+  form.append(meta, ...sections);
+
+  $("#modal-save").hidden = true;
+  const cancel = $("#modal-cancel");
+  cancel.textContent = t("Done");
+  cancel.classList.remove("btn-ghost");
+  cancel.classList.add("btn-signal");
+  $("#modal-scrim").hidden = false;
 }
 
 // ------------------------------------------------------------------ playground

@@ -35,6 +35,10 @@ class Provider(Base):
     # Adapter selector: openai_compat | anthropic | gemini
     provider_type: Mapped[str] = mapped_column(String(50))
     default_base_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Price book per upstream model, used to cost prefix-routed (`provider/model`)
+    # calls that have no Deployment row: {"gpt-4o": {"input": 2.5, "output": 10}}.
+    # Prices are per 1M tokens; a Deployment's own price overrides this.
+    model_prices: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -155,6 +159,11 @@ class RequestLog(Base):
     retries: Mapped[int] = mapped_column(Integer, default=0)
     cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Captured upstream I/O (when GW_LOG_UPSTREAM_IO is on): the exact body sent
+    # to the provider and its raw response — for verifying param translation.
+    upstream_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    upstream_request: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    upstream_response: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
 
 
 __all__ = [
