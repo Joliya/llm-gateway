@@ -1,0 +1,28 @@
+# Runs database migrations exactly once, separately from the app pods, so that
+# scaling the Deployment to N replicas never races N concurrent `alembic upgrade`.
+# Run this (and wait for completion) before rolling out a new app version:
+#   kubectl apply -f deploy/k8s/migrate-job.yaml
+#   kubectl wait --for=condition=complete job/llm-gateway-migrate --timeout=120s
+# Re-applying for a new image: delete the old Job first (Jobs are immutable):
+#   kubectl delete job llm-gateway-migrate --ignore-not-found
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llm-gateway-migrate
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: llm-gateway:latest   # replace with your registry image + tag
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - secretRef:
+                name: llm-gateway-secrets
+          env:
+            # The schema is owned by migrations, not create_all.
+            - name: GW_AUTO_CREATE_TABLES
+              value: "false"

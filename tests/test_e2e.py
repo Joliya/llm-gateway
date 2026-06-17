@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 import respx
 
 from tests.conftest import MASTER_HEADERS
@@ -212,6 +213,33 @@ async def test_models_listing(app_client):
     assert r.status_code == 200
     ids = [m["id"] for m in r.json()["data"]]
     assert "balanced" in ids
+
+
+async def test_add_spend_is_atomic_no_lost_update(app_client):
+    # Two sessions each load their own (soon-stale) copy of the same key and
+    # both add spend. A read-modify-write on the ORM object would lose one
+    # update; the SQL-side `spend = spend + cost` must accumulate both.
+    from sqlalchemy import select
+    from app.core import budget as budget_mod
+    from app.db.models import VirtualKey
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as s:
+        vk = (await s.execute(select(VirtualKey))).scalars().first()
+        vk_id = vk.id
+        start = vk.spend or 0.0
+
+    async with SessionLocal() as a, SessionLocal() as b:
+        vk_a = await a.get(VirtualKey, vk_id)
+        vk_b = await b.get(VirtualKey, vk_id)   # both read the same starting spend
+        await budget_mod.add_spend(a, vk_a, 1.5)
+        await a.commit()
+        await budget_mod.add_spend(b, vk_b, 2.5)
+        await b.commit()
+
+    async with SessionLocal() as s:
+        vk = await s.get(VirtualKey, vk_id)
+        assert vk.spend == pytest.approx(start + 4.0)   # 1.5 + 2.5, nothing lost
 
 
 async def test_admin_create_key_returns_plaintext_once(app_client):

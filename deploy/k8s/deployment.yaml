@@ -1,0 +1,87 @@
+# App Deployment. Migrations are handled by migrate-job.yaml, so every pod runs
+# with GW_RUN_MIGRATIONS=false — no per-pod `alembic upgrade` race on scale-up.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-gateway
+  labels:
+    app: llm-gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: llm-gateway
+  template:
+    metadata:
+      labels:
+        app: llm-gateway
+    spec:
+      containers:
+        - name: gateway
+          image: llm-gateway:latest   # replace with your registry image + tag
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: llm-gateway-secrets
+          env:
+            - name: GW_RUN_MIGRATIONS      # the migrate Job owns the schema
+              value: "false"
+            - name: GW_AUTO_CREATE_TABLES
+              value: "false"
+            # Per-pod DB pool. Keep replicas × (size + overflow) under the
+            # Postgres connection budget, or front it with PgBouncer.
+            - name: GW_DB_POOL_SIZE
+              value: "10"
+            - name: GW_DB_MAX_OVERFLOW
+              value: "20"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-gateway
+spec:
+  selector:
+    app: llm-gateway
+  ports:
+    - port: 80
+      targetPort: 8000
+---
+# Optional: scale on CPU. Requires metrics-server.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: llm-gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: llm-gateway
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

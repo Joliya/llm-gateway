@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import VirtualKey
@@ -37,7 +38,20 @@ def is_over_budget(vk: VirtualKey) -> bool:
 
 
 async def add_spend(session: AsyncSession, vk: VirtualKey, cost: float) -> None:
+    """Increment spend atomically in the database.
+
+    Computing `spend + cost` in SQL (rather than read-modify-write on the ORM
+    object) makes concurrent requests for the same key — across async tasks or
+    across replicas — safe from lost updates. We deliberately do NOT also mutate
+    `vk.spend` in memory: that would mark the instance dirty and have the ORM
+    emit a second, absolute `UPDATE spend=<value>` on commit, clobbering the
+    atomic increment. Nothing reads `vk.spend` again this request; the next
+    request loads the key fresh.
+    """
     if cost <= 0:
         return
-    vk.spend = (vk.spend or 0.0) + cost
-    await session.flush()
+    await session.execute(
+        update(VirtualKey)
+        .where(VirtualKey.id == vk.id)
+        .values(spend=VirtualKey.spend + cost)
+    )

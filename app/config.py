@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     # managing the schema with Alembic migrations, then run `alembic upgrade head`.
     auto_create_tables: bool = True
 
+    # Connection pool (ignored for SQLite). Tune for the expected per-pod
+    # concurrency; total upstream DB connections ≈ replicas × (size + overflow),
+    # so keep that under Postgres max_connections (or front it with PgBouncer).
+    db_pool_size: int = 10                  # persistent connections per process
+    db_max_overflow: int = 20               # extra burst connections beyond pool_size
+    db_pool_timeout: float = 30.0           # seconds to wait for a free connection
+    db_pool_recycle: int = 1800             # recycle connections older than this (s)
+
     # --- Proxy behaviour ---
     # Whether the upstream HTTP client honors HTTP(S)_PROXY / ALL_PROXY env vars.
     # Set false to always connect to providers directly (ignores system proxies).
