@@ -45,6 +45,23 @@ async def update_key(key_id: int, payload: VirtualKeyUpdate, session: AsyncSessi
     return vk
 
 
+@router.post("/{key_id}/rotate", response_model=VirtualKeyCreated)
+async def rotate_key(key_id: int, session: AsyncSession = Depends(get_session)):
+    """Issue a fresh secret for an existing key; the old secret stops working
+    immediately. All settings (budget, limits, allowlist) are preserved. The new
+    plaintext is returned once."""
+    vk = await session.get(VirtualKey, key_id)
+    if vk is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Key not found")
+    plaintext = generate_virtual_key()
+    vk.key_hash = hash_key(plaintext)
+    vk.key_prefix = key_display_prefix(plaintext)
+    await session.commit()
+    await session.refresh(vk)
+    base = VirtualKeyOut.model_validate(vk, from_attributes=True)
+    return VirtualKeyCreated(**base.model_dump(), key=plaintext)
+
+
 @router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_key(key_id: int, session: AsyncSession = Depends(get_session)):
     vk = await session.get(VirtualKey, key_id)

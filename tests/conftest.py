@@ -17,23 +17,30 @@ os.environ["GW_DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
 os.environ["GW_REDIS_URL"] = ""
 os.environ["GW_MAX_RETRIES"] = "2"
 os.environ["GW_RETRY_BACKOFF_BASE"] = "0"  # no sleeping in tests
+# Synchronous logging so "request then read /admin/logs" assertions are
+# deterministic (SQLite would force inline anyway; be explicit).
+os.environ["GW_LOG_ASYNC"] = "false"
 
 import httpx  # noqa: E402
 import pytest_asyncio  # noqa: E402
 
-from app.core.security import encrypt_secret  # noqa: E402
+from app.core.security import (  # noqa: E402
+    encrypt_secret,  # noqa: E402
+    generate_virtual_key,
+    hash_key,
+    key_display_prefix,
+)
 from app.db.models import Alias, Credential, Deployment, Provider, VirtualKey  # noqa: E402
-from app.core.security import generate_virtual_key, hash_key, key_display_prefix  # noqa: E402
 
 MASTER_HEADERS = {"Authorization": "Bearer test-master"}
 
 
 @pytest_asyncio.fixture
 async def app_client():
-    from app.main import app
-    from app.db.session import SessionLocal, engine
-    from app.db.base import Base
     from app.core.config_store import config_store
+    from app.db.base import Base
+    from app.db.session import SessionLocal, engine
+    from app.main import app
 
     async with app.router.lifespan_context(app):
         # fresh schema each test for isolation

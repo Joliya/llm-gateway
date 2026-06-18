@@ -71,6 +71,24 @@ class Settings(BaseSettings):
     # Cap stored upstream response strings to this many chars (0 = unlimited).
     log_upstream_max_chars: int = 20000
 
+    # Write request logs off the request path via an in-process queue + a
+    # background worker that batches inserts. Cuts tail latency and per-request
+    # commits under load. Ignored for SQLite (always logs inline, to avoid the
+    # single-writer lock contention). Set false to force synchronous logging.
+    log_async: bool = True
+    log_queue_max: int = 10000              # bounded queue; overflow is dropped + counted
+    log_batch_size: int = 100               # max rows per worker transaction
+    log_flush_interval: float = 0.5         # max seconds the worker waits before flushing
+
+    # Expose Prometheus metrics at GET /metrics.
+    metrics_enabled: bool = True
+    # Record mutating /admin calls (POST/PATCH/PUT/DELETE) to admin_audit_logs.
+    admin_audit_enabled: bool = True
+
+    # Background sweep that resets idle keys' daily/monthly budget windows.
+    # 0 disables the sweeper (on-access reset_if_needed still runs).
+    budget_sweep_interval: float = 300.0
+
 
 @lru_cache
 def get_settings() -> Settings:

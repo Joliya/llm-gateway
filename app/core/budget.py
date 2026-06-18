@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import VirtualKey
 
 
 def _now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
+    return dt.datetime.now(dt.UTC)
 
 
 def _period_elapsed(anchor: dt.datetime, period: str, now: dt.datetime) -> bool:
     if anchor.tzinfo is None:
-        anchor = anchor.replace(tzinfo=dt.timezone.utc)
+        anchor = anchor.replace(tzinfo=dt.UTC)
     if period == "daily":
         return now.date() > anchor.date()
     if period == "monthly":
@@ -29,6 +29,30 @@ async def reset_if_needed(session: AsyncSession, vk: VirtualKey) -> None:
         vk.spend = 0.0
         vk.budget_anchor = now
         await session.flush()
+
+
+async def sweep_expired(session: AsyncSession) -> int:
+    """Reset spend for every key whose daily/monthly window has rolled over.
+
+    `reset_if_needed` only fires when a key is used; this sweep keeps idle keys'
+    spend/anchor correct too (so reports and the console don't show stale spend).
+    Returns the number of keys reset.
+    """
+    now = _now()
+    keys = (
+        await session.execute(
+            select(VirtualKey).where(VirtualKey.budget_period.in_(("daily", "monthly")))
+        )
+    ).scalars().all()
+    reset = 0
+    for vk in keys:
+        if _period_elapsed(vk.budget_anchor, vk.budget_period, now):
+            vk.spend = 0.0
+            vk.budget_anchor = now
+            reset += 1
+    if reset:
+        await session.commit()
+    return reset
 
 
 def is_over_budget(vk: VirtualKey) -> bool:

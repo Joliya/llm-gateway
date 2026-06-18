@@ -109,6 +109,14 @@ const I18N = {
     "circuit breaker": "熔断器", "All deployments nominal — no failures recorded.": "所有部署正常 —— 无失败记录。",
     "deployment #{id}": "部署 #{id}", "available": "可用", "cooling down": "冷却中",
     "{n} fails": "{n} 次失败", "Failures": "失败次数", "Cooldown": "冷却剩余",
+    // analytics
+    "Analytics": "分析", "insights": "洞察", "Usage analytics": "用量分析",
+    "Spend, tokens and traffic broken down by alias and by key.": "按别名和密钥拆分的花费、Token 与流量。",
+    "Window": "时间范围", "Last 24 hours": "最近 24 小时", "Last 7 days": "最近 7 天", "Last 30 days": "最近 30 天",
+    "Spend": "花费", "spend by alias": "按别名的花费", "requests by alias": "按别名的请求数",
+    "spend by key": "按密钥的花费", "(no key)": "（无密钥）", "No traffic in this window.": "该时间范围内无流量。",
+    "recent admin activity": "最近的管理操作", "No admin changes recorded.": "无管理变更记录。",
+    "Method": "方法", "Path": "路径", "Actor": "操作者",
     // logs
     "traffic": "流量", "Request log": "请求日志",
     "Every proxied request, newest first — tokens, cost, latency, retries, and cache hits. Click a row to inspect the exact request and response exchanged with the provider.":
@@ -394,6 +402,7 @@ async function renderView(route) {
   content.innerHTML = "";
   try {
     if (route === "overview") return await renderOverview(content, crumb);
+    if (route === "analytics") return await renderAnalytics(content, crumb);
     if (route === "logs") return await renderLogs(content, crumb);
     if (route === "playground") return await renderPlayground(content, crumb);
     return await renderCrud(route, content, crumb);
@@ -541,6 +550,122 @@ async function renderOverview(content, crumb) {
       el("thead", {}, el("tr", {}, el("th", {}, t("Deployment")), el("th", {}, t("State")), el("th", {}, t("Failures")), el("th", {}, t("Cooldown")))),
       tb))));
   }
+}
+
+// ------------------------------------------------------------------ analytics
+function _bars(rows, valueText) {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  const host = el("div", { class: "bars" });
+  for (const r of rows) {
+    const pct = r.value > 0 ? Math.max(3, Math.round((r.value / max) * 100)) : 0;
+    host.append(el("div", { class: "bar-row" },
+      el("div", { class: "bar-label", title: r.label }, r.label),
+      el("div", { class: "bar-track" }, el("div", { class: "bar-fill", style: "width:" + pct + "%" })),
+      el("div", { class: "bar-val" }, valueText(r.value, r)),
+    ));
+  }
+  return host;
+}
+
+async function renderAnalytics(content, crumb) {
+  crumb.textContent = t("Analytics");
+  await loadRef();
+  let hours = 24;
+  let allKeys = [];
+
+  content.append(
+    el("div", { class: "view-head" }, el("div", {},
+      el("div", { class: "eyebrow" }, t("insights")),
+      el("h1", { class: "view-title" }, t("Usage analytics")),
+      el("p", { class: "view-desc" }, t("Spend, tokens and traffic broken down by alias and by key.")),
+    ))
+  );
+
+  const windowSel = el("select", { class: "lang-select", onchange: (e) => { hours = +e.target.value; reload(); } },
+    el("option", { value: "24" }, t("Last 24 hours")),
+    el("option", { value: "168" }, t("Last 7 days")),
+    el("option", { value: "720" }, t("Last 30 days")),
+  );
+  content.append(el("div", { class: "filters" },
+    el("label", { class: "field" }, el("span", { class: "field-label" }, t("Window")), windowSel)));
+
+  const host = el("div", {});
+  content.append(host);
+
+  const keyName = (id) => {
+    if (id == null) return t("(no key)");
+    const k = allKeys.find((x) => x.id === id);
+    return k ? k.name : "#" + id;
+  };
+
+  const barPanel = (label, rows, valueText, extraStyle) => {
+    host.append(el("div", { class: "eyebrow section-label", style: extraStyle || "" }, label));
+    if (!rows.length) {
+      host.append(el("div", { class: "panel" }, el("div", { class: "empty" }, t("No traffic in this window."))));
+    } else {
+      host.append(el("div", { class: "panel panel-pad" }, _bars(rows, valueText)));
+    }
+  };
+
+  async function reload() {
+    host.innerHTML = "";
+    let usage, byKey, audit;
+    try {
+      [usage, byKey, allKeys, audit] = await Promise.all([
+        api("GET", `/admin/usage?since_hours=${hours}`),
+        api("GET", `/admin/usage/by-key?since_hours=${hours}`),
+        api("GET", "/admin/keys").catch(() => []),
+        api("GET", "/admin/audit?limit=20").catch(() => []),
+      ]);
+    } catch (e) { host.append(el("div", { class: "empty" }, e.message)); return; }
+
+    const totReq = usage.reduce((a, u) => a + u.requests, 0);
+    const totTok = usage.reduce((a, u) => a + u.total_tokens, 0);
+    const totCost = usage.reduce((a, u) => a + u.cost, 0);
+    const stat = (label, value) => el("div", { class: "stat" },
+      el("div", { class: "stat-label" }, label),
+      el("div", { class: "stat-value" }, String(value)));
+    host.append(el("div", { class: "stat-grid" },
+      stat(t("Requests"), totReq.toLocaleString()),
+      stat(t("Tokens"), totTok.toLocaleString()),
+      stat(t("Spend"), "$" + totCost.toFixed(2)),
+    ));
+
+    const costRows = usage.map((u) => ({ label: u.alias || "—", value: u.cost })).sort((a, b) => b.value - a.value);
+    barPanel(t("spend by alias"), costRows, (v) => "$" + v.toFixed(4));
+
+    const reqRows = usage.map((u) => ({ label: u.alias || "—", value: u.requests })).sort((a, b) => b.value - a.value);
+    barPanel(t("requests by alias"), reqRows, (v) => v.toLocaleString(), "margin-top:24px");
+
+    const keyRows = byKey
+      .map((u) => ({ label: keyName(u.virtual_key_id), value: u.cost, req: u.requests }))
+      .sort((a, b) => b.value - a.value);
+    barPanel(t("spend by key"), keyRows, (v, r) => "$" + v.toFixed(4) + " · " + r.req, "margin-top:24px");
+
+    // recent admin activity (audit trail)
+    host.append(el("div", { class: "eyebrow section-label", style: "margin-top:24px" }, t("recent admin activity")));
+    if (!audit.length) {
+      host.append(el("div", { class: "panel" }, el("div", { class: "empty" }, t("No admin changes recorded."))));
+    } else {
+      const tb = el("tbody", {});
+      for (const a of audit) {
+        tb.append(el("tr", {},
+          el("td", { class: "cell-muted" }, new Date(a.ts).toLocaleString()),
+          el("td", {}, el("span", { class: "pill " + (a.status < 400 ? "on" : "err") }, a.method)),
+          el("td", { class: "cell-strong" }, a.path),
+          el("td", { class: "cell-num" }, String(a.status)),
+          el("td", { class: "cell-muted" }, a.actor || "—"),
+        ));
+      }
+      host.append(el("div", { class: "panel" }, el("div", { class: "table-wrap" }, el("table", {},
+        el("thead", {}, el("tr", {},
+          el("th", {}, t("Time")), el("th", {}, t("Method")), el("th", {}, t("Path")),
+          el("th", {}, t("Status")), el("th", {}, t("Actor")))),
+        tb))));
+    }
+  }
+
+  await reload();
 }
 
 // ------------------------------------------------------------------ logs
