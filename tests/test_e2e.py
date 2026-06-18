@@ -368,6 +368,16 @@ async def test_request_id_generated_when_absent(app_client):
     assert r.headers.get("x-request-id")   # a fresh id was generated
 
 
+async def test_readiness_checks_database(app_client):
+    r = await app_client.get("/ready")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ready"
+    assert body["checks"]["database"] == "ok"
+    # no Redis configured in tests -> not reported
+    assert "redis" not in body["checks"]
+
+
 @respx.mock
 async def test_metrics_endpoint_counts_requests(app_client):
     respx.post("https://up.test/v1/chat/completions").mock(

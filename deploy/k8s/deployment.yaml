@@ -35,9 +35,11 @@ spec:
               value: "10"
             - name: GW_DB_MAX_OVERFLOW
               value: "20"
+          # Readiness verifies DB (+ Redis) connectivity; liveness is a cheap
+          # process check so a transient dependency blip won't restart the pod.
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8000
             initialDelaySeconds: 3
             periodSeconds: 10

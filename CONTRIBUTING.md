@@ -34,6 +34,13 @@ Both must pass. New behavior needs a test — `tests/test_e2e.py` drives the who
 app through an ASGI transport with mocked upstreams (`respx`), which is the
 preferred place for feature tests.
 
+Dependencies are locked in `uv.lock` and CI installs with `uv sync --frozen`. If
+you change `pyproject.toml` dependencies, regenerate and commit the lockfile:
+
+```bash
+uv lock
+```
+
 ## Database changes
 
 Models live in `app/db/models.py`. When you change a model, add an Alembic

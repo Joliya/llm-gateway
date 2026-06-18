@@ -8,8 +8,9 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from app.api.admin import (
     aliases as admin_aliases,
@@ -110,7 +111,35 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health():
+        # Liveness: the process is up. Cheap and dependency-free, so a transient
+        # DB/Redis blip doesn't get the pod killed. Use /ready for routing.
         return {"status": "ok"}
+
+    @app.get("/ready", include_in_schema=False)
+    async def ready():
+        # Readiness: verify the backing services this pod needs are reachable, so
+        # K8s won't route traffic to a pod that can't actually serve requests.
+        checks: dict[str, str] = {}
+        ok = True
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            checks["database"] = "ok"
+        except Exception:
+            checks["database"] = "error"
+            ok = False
+        redis = getattr(app.state, "redis", None)
+        if redis is not None:
+            try:
+                await redis.ping()
+                checks["redis"] = "ok"
+            except Exception:
+                checks["redis"] = "error"
+                ok = False
+        return JSONResponse(
+            {"status": "ready" if ok else "not ready", "checks": checks},
+            status_code=200 if ok else 503,
+        )
 
     if settings.metrics_enabled:
         @app.get("/metrics", include_in_schema=False)
