@@ -398,17 +398,18 @@ async def test_non_master_user_cannot_manage_users(app_client):
     # A logged-in user has admin access but must NOT manage other users.
     created = (await app_client.post("/admin/users", headers=MASTER_HEADERS,
                                      json={"username": "erin"})).json()
-    token = (await app_client.post("/admin/login",
-                                   json={"username": "erin", "password": created["password"]})).json()["token"]
-    H = {"Authorization": f"Bearer {token}"}
+    uid = created["id"]
+    login = await app_client.post("/admin/login",
+                                  json={"username": "erin", "password": created["password"]})
+    H = {"Authorization": f"Bearer {login.json()['token']}"}
 
     # ordinary admin endpoints still work for the user
     assert (await app_client.get("/admin/keys", headers=H)).status_code == 200
     # but user management is master-only -> 403
     assert (await app_client.get("/admin/users", headers=H)).status_code == 403
     assert (await app_client.post("/admin/users", headers=H, json={"username": "x"})).status_code == 403
-    assert (await app_client.post(f"/admin/users/{created['id']}/reset-password", headers=H)).status_code == 403
-    assert (await app_client.delete(f"/admin/users/{created['id']}", headers=H)).status_code == 403
+    assert (await app_client.post(f"/admin/users/{uid}/reset-password", headers=H)).status_code == 403
+    assert (await app_client.delete(f"/admin/users/{uid}", headers=H)).status_code == 403
 
 
 async def test_user_login_bad_password_and_duplicate(app_client):
