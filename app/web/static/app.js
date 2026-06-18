@@ -751,7 +751,7 @@ async function showLogDetail(id) {
   const meta = el("div", { class: "io-meta" },
     el("span", {}, (r.provider_type || "—") + " · " + (r.alias || r.requested_model)),
     el("span", { class: "pill " + (r.status === 200 ? "on" : "err") }, String(r.status)),
-    el("span", { class: "cell-muted" }, (r.total_tokens || 0).toLocaleString() + " tok · " + fmt.money(r.cost) + " · " + (r.latency_ms || 0) + " ms"),
+    el("span", { class: "cell-muted" }, (r.total_tokens || 0).toLocaleString() + " tok · $" + Number(r.cost || 0).toFixed(4) + " · " + (r.latency_ms || 0) + " ms"),
   );
   const sections = [
     el("div", { class: "io-sec" }, el("div", { class: "io-label" }, t("Sent to provider")),
