@@ -7,18 +7,37 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.core.security import hash_key
-from app.db.models import VirtualKey
+from app.core.request_context import set_actor
+from app.core.security import hash_key, verify_session_token
+from app.db.models import User, VirtualKey
 from app.db.session import get_session
 
 _settings = get_settings()
 
 
-def require_master_key(authorization: str | None = Header(default=None)) -> None:
-    """Protect the /admin API with the configured master key (Bearer or raw)."""
+async def require_admin(
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+) -> str:
+    """Protect the /admin API. Accepts either the master key or a logged-in
+    user's session token, and records who the actor is for the audit log.
+    Returns the actor identity ("master" or the username)."""
     token = _extract_bearer(authorization)
-    if not token or token != _settings.master_key:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid master key")
+    if not token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing credentials")
+
+    if token == _settings.master_key:
+        set_actor("master")
+        return "master"
+
+    uid = verify_session_token(token)
+    if uid is not None:
+        user = await session.get(User, uid)
+        if user is not None and user.enabled:
+            set_actor(user.username)
+            return user.username
+
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired credentials")
 
 
 def _extract_bearer(authorization: str | None) -> str | None:

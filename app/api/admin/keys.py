@@ -4,13 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_master_key
+from app.core.auth import require_admin
 from app.core.security import generate_virtual_key, hash_key, key_display_prefix
 from app.db.models import VirtualKey
 from app.db.session import get_session
 from app.schemas.admin import VirtualKeyCreate, VirtualKeyCreated, VirtualKeyOut, VirtualKeyUpdate
 
-router = APIRouter(dependencies=[Depends(require_master_key)])
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.get("", response_model=list[VirtualKeyOut])

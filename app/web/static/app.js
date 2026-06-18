@@ -109,6 +109,21 @@ const I18N = {
     "circuit breaker": "熔断器", "All deployments nominal — no failures recorded.": "所有部署正常 —— 无失败记录。",
     "deployment #{id}": "部署 #{id}", "available": "可用", "cooling down": "冷却中",
     "{n} fails": "{n} 次失败", "Failures": "失败次数", "Cooldown": "冷却剩余",
+    // login + users
+    "Signal router console — sign in with the master key, or a username + password.":
+      "信号路由控制台 —— 用主密钥,或用户名 + 密码登录。",
+    "Username": "用户名", "Leave blank to use the master key": "留空则使用主密钥登录",
+    "Master key / password": "主密钥 / 密码", "Invalid username or password": "用户名或密码错误",
+    "Users": "用户", "User": "用户", "access": "访问控制",
+    "Console operator accounts. Each logs in with a username + auto-generated password and has full admin access. The password is shown once on creation or reset.":
+      "控制台操作员账号。每个账号用 用户名 + 自动生成的密码 登录,拥有完整管理权限。密码仅在创建或重置时显示一次。",
+    "No users yet. Create the first one.": "还没有用户,先创建一个。",
+    "Created": "创建时间", "Last login": "最近登录", "Reset password": "重置密码",
+    "Disable": "禁用", "Enable": "启用",
+    "User created": "用户已创建", "Password reset": "密码已重置",
+    "Copy it now — this is the only time the password is shown.": "立即复制 —— 密码只会显示这一次。",
+    'Reset password for "{name}"? The old password stops working.': "重置「{name}」的密码?旧密码将立即失效。",
+    'Delete user "{name}"? This cannot be undone.': "删除用户「{name}」?此操作不可撤销。",
     // analytics
     "Analytics": "分析", "insights": "洞察", "Usage analytics": "用量分析",
     "Spend, tokens and traffic broken down by alias and by key.": "按别名和密钥拆分的花费、Token 与流量。",
@@ -370,6 +385,16 @@ const SCHEMAS = {
       { name: "expires_at", label: "Expires", type: "datetime-local" },
     ],
   },
+
+  users: {
+    title: "Users",
+    singular: "User",
+    endpoint: "/admin/users",
+    desc: "Console operator accounts. Each logs in with a username + auto-generated password and has full admin access. The password is shown once on creation or reset.",
+    fields: [
+      { name: "username", label: "Username", type: "text", required: true, hint: "Used to log into the console. A password is generated automatically." },
+    ],
+  },
 };
 
 function budgetCell(r) {
@@ -404,6 +429,7 @@ async function renderView(route) {
     if (route === "overview") return await renderOverview(content, crumb);
     if (route === "analytics") return await renderAnalytics(content, crumb);
     if (route === "logs") return await renderLogs(content, crumb);
+    if (route === "users") return await renderUsers(content, crumb);
     if (route === "playground") return await renderPlayground(content, crumb);
     return await renderCrud(route, content, crumb);
   } catch (e) {
@@ -666,6 +692,77 @@ async function renderAnalytics(content, crumb) {
   }
 
   await reload();
+}
+
+// ------------------------------------------------------------------ users
+async function renderUsers(content, crumb) {
+  crumb.textContent = t("Users");
+  content.append(
+    el("div", { class: "view-head" },
+      el("div", {},
+        el("div", { class: "eyebrow" }, t("access")),
+        el("h1", { class: "view-title" }, t("Users")),
+        el("p", { class: "view-desc" }, t(SCHEMAS.users.desc)),
+      ),
+      el("button", { class: "btn btn-signal", onclick: () => openModal("users", null) }, t("+ New {x}", { x: t("User") })),
+    )
+  );
+
+  let users;
+  try { users = await api("GET", "/admin/users"); }
+  catch (e) { content.append(el("div", { class: "empty" }, e.message)); return; }
+
+  if (!users.length) {
+    content.append(el("div", { class: "panel" }, el("div", { class: "empty" }, t("No users yet. Create the first one."))));
+    return;
+  }
+
+  const tb = el("tbody", {});
+  for (const u of users) {
+    tb.append(el("tr", {},
+      el("td", { class: "cell-muted" }, "#" + u.id),
+      el("td", { class: "cell-strong" }, u.username),
+      el("td", {}, fmt.pill(u.enabled)),
+      el("td", { class: "cell-muted" }, new Date(u.created_at).toLocaleDateString()),
+      el("td", { class: "cell-muted" }, u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"),
+      el("td", { class: "col-actions" }, el("div", { class: "row-actions" },
+        el("button", { class: "btn btn-sm btn-ghost", onclick: () => resetUserPassword(u) }, t("Reset password")),
+        el("button", { class: "btn btn-sm btn-ghost", onclick: () => toggleUser(u) }, t(u.enabled ? "Disable" : "Enable")),
+        el("button", { class: "btn btn-sm btn-danger", onclick: () => deleteUser(u) }, t("Delete")),
+      )),
+    ));
+  }
+  content.append(el("div", { class: "panel" }, el("div", { class: "table-wrap" }, el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, t("ID")), el("th", {}, t("Username")), el("th", {}, t("State")),
+      el("th", {}, t("Created")), el("th", {}, t("Last login")), el("th", {}, ""))),
+    tb))));
+}
+
+async function resetUserPassword(u) {
+  if (!confirm(t('Reset password for "{name}"? The old password stops working.', { name: u.username }))) return;
+  try {
+    const r = await api("POST", "/admin/users/" + u.id + "/reset-password");
+    revealSecret(t("Password reset"), u.username, r.password,
+      t("Copy it now — this is the only time the password is shown."));
+  } catch (e) { toast(e.message, true); }
+}
+
+async function toggleUser(u) {
+  try {
+    await api("PATCH", "/admin/users/" + u.id, { enabled: !u.enabled });
+    toast(t("{x} updated", { x: t("User") }));
+    renderView("users");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteUser(u) {
+  if (!confirm(t('Delete user "{name}"? This cannot be undone.', { name: u.username }))) return;
+  try {
+    await api("DELETE", "/admin/users/" + u.id);
+    toast(t("{x} deleted", { x: t("User") }));
+    renderView("users");
+  } catch (e) { toast(e.message, true); }
 }
 
 // ------------------------------------------------------------------ logs
@@ -994,6 +1091,10 @@ async function submitModal(ev) {
       if (schema.endpoint === "/admin/keys" && created && created.key) {
         closeModal();
         revealKey(created);
+      } else if (schema.endpoint === "/admin/users" && created && created.password) {
+        closeModal();
+        revealSecret(t("User created"), created.username, created.password,
+          t("Copy it now — this is the only time the password is shown."));
       } else {
         toast(t("{x} created", { x: t(schema.singular) }));
         closeModal();
@@ -1008,17 +1109,22 @@ function modalStateRoute() { return modalState ? modalState.route : ROUTE; }
 function showModalErr(msg) { const n = $("#modal-err"); n.textContent = msg; n.hidden = false; }
 
 function revealKey(created) {
-  // reuse modal chrome to present the one-time secret
+  revealSecret(t("Virtual key created"), created.name + " · " + created.key_prefix + "…",
+    created.key, t("Copy it now — this is the only time the full key is shown."));
+}
+
+function revealSecret(title, label, value, note) {
+  // reuse modal chrome to present a one-time secret (key or password)
   $("#modal-eyebrow").textContent = t("secret");
-  $("#modal-title").textContent = t("Virtual key created");
+  $("#modal-title").textContent = title;
   const form = $("#modal-form");
   form.innerHTML = "";
-  const code = el("code", {}, created.key);
+  const code = el("code", {}, value);
   form.append(el("div", { class: "reveal" },
-    el("div", { class: "reveal-label" }, created.name + " · " + created.key_prefix + "…"),
+    el("div", { class: "reveal-label" }, label),
     el("div", { class: "reveal-value" }, code,
-      el("button", { class: "btn btn-sm", type: "button", onclick: () => { navigator.clipboard?.writeText(created.key); toast(t("Copied to clipboard")); } }, t("Copy"))),
-    el("p", { class: "reveal-note" }, t("Copy it now — this is the only time the full key is shown.")),
+      el("button", { class: "btn btn-sm", type: "button", onclick: () => { navigator.clipboard?.writeText(value); toast(t("Copied to clipboard")); } }, t("Copy"))),
+    el("p", { class: "reveal-note" }, note),
   ));
   $("#modal-err").hidden = true;
   $("#modal-scrim").hidden = false;
@@ -1053,13 +1159,25 @@ function logout() {
   $("#app").hidden = true;
   $("#login").hidden = false;
   $("#master-key").value = "";
+  const u = $("#login-user");
+  if (u) u.value = "";
 }
 
-async function tryLogin(key) {
-  MASTER = key;
-  // validate against a cheap protected endpoint
-  await api("GET", "/admin/providers/provider-types");
-  sessionStorage.setItem(KEY_STORE, key);
+async function tryLogin(username, secret) {
+  if (username) {
+    // User login: exchange username + password for a session token.
+    const res = await fetch("/admin/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password: secret }),
+    });
+    if (!res.ok) throw new Error(t("Invalid username or password"));
+    MASTER = (await res.json()).token;
+  } else {
+    // Master-key login: the key is itself the bearer.
+    MASTER = secret;
+    await api("GET", "/admin/providers/provider-types");  // validate
+  }
+  sessionStorage.setItem(KEY_STORE, MASTER);
   showApp();
 }
 
@@ -1068,7 +1186,7 @@ function wire() {
     e.preventDefault();
     const errn = $("#login-err");
     errn.hidden = true;
-    try { await tryLogin($("#master-key").value); }
+    try { await tryLogin($("#login-user").value.trim(), $("#master-key").value); }
     catch (err) { errn.textContent = err.message; errn.hidden = false; }
   });
   $("#signout").addEventListener("click", logout);

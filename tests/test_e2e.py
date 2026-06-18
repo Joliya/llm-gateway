@@ -368,6 +368,75 @@ async def test_request_id_generated_when_absent(app_client):
     assert r.headers.get("x-request-id")   # a fresh id was generated
 
 
+async def test_user_create_login_and_audit_actor(app_client):
+    # master creates a user; password is returned once
+    created = (await app_client.post("/admin/users", headers=MASTER_HEADERS,
+                                     json={"username": "alice"})).json()
+    assert created["username"] == "alice"
+    pw = created["password"]
+    assert pw and "password" not in {k for u in
+                                     (await app_client.get("/admin/users", headers=MASTER_HEADERS)).json()
+                                     for k in u}
+
+    # user logs in and gets a session token
+    login = await app_client.post("/admin/login", json={"username": "alice", "password": pw})
+    assert login.status_code == 200, login.text
+    token = login.json()["token"]
+    H = {"Authorization": f"Bearer {token}"}
+
+    # the session token authorizes the admin API
+    assert (await app_client.get("/admin/providers", headers=H)).status_code == 200
+
+    # a mutation made via the session is attributed to the username in the audit log
+    await app_client.post("/admin/keys", headers=H,
+                          json={"name": "via-alice", "allowed_aliases": ["balanced"]})
+    audit = (await app_client.get("/admin/audit", headers=MASTER_HEADERS)).json()
+    assert any(a["path"] == "/admin/keys" and a["actor"] == "alice" for a in audit)
+
+
+async def test_user_login_bad_password_and_duplicate(app_client):
+    created = (await app_client.post("/admin/users", headers=MASTER_HEADERS,
+                                     json={"username": "bob"})).json()
+    bad = await app_client.post("/admin/login", json={"username": "bob", "password": "wrong"})
+    assert bad.status_code == 401
+    dup = await app_client.post("/admin/users", headers=MASTER_HEADERS, json={"username": "bob"})
+    assert dup.status_code == 409
+    _ = created
+
+
+async def test_user_reset_password_invalidates_old(app_client):
+    created = (await app_client.post("/admin/users", headers=MASTER_HEADERS,
+                                     json={"username": "carol"})).json()
+    uid, old_pw = created["id"], created["password"]
+    assert (await app_client.post("/admin/login",
+                                  json={"username": "carol", "password": old_pw})).status_code == 200
+
+    reset = await app_client.post(f"/admin/users/{uid}/reset-password", headers=MASTER_HEADERS)
+    new_pw = reset.json()["password"]
+    assert new_pw != old_pw
+    assert (await app_client.post("/admin/login",
+                                  json={"username": "carol", "password": old_pw})).status_code == 401
+    assert (await app_client.post("/admin/login",
+                                  json={"username": "carol", "password": new_pw})).status_code == 200
+
+
+async def test_disabled_user_cannot_login_or_use_session(app_client):
+    created = (await app_client.post("/admin/users", headers=MASTER_HEADERS,
+                                     json={"username": "dave"})).json()
+    uid, pw = created["id"], created["password"]
+    token = (await app_client.post("/admin/login",
+                                   json={"username": "dave", "password": pw})).json()["token"]
+    H = {"Authorization": f"Bearer {token}"}
+    assert (await app_client.get("/admin/providers", headers=H)).status_code == 200
+
+    # disable the user
+    await app_client.patch(f"/admin/users/{uid}", headers=MASTER_HEADERS, json={"enabled": False})
+    # existing session token is now rejected, and re-login fails
+    assert (await app_client.get("/admin/providers", headers=H)).status_code == 401
+    assert (await app_client.post("/admin/login",
+                                  json={"username": "dave", "password": pw})).status_code == 401
+
+
 async def test_readiness_checks_database(app_client):
     r = await app_client.get("/ready")
     assert r.status_code == 200

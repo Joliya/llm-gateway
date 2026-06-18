@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from app.config import get_settings
-from app.core.request_context import new_request_id, set_request_id
+from app.core.request_context import get_actor, new_request_id, set_request_id
 
 _settings = get_settings()
 _log = logging.getLogger("llm_gateway.audit")
@@ -50,14 +50,13 @@ class RequestContextMiddleware:
             and method in _MUTATING
             and path.startswith("/admin")
         ):
-            actor = headers.get(b"x-admin-actor")
-            await self._audit(
-                request_id,
-                actor.decode("latin-1")[:150] if actor else None,
-                method,
-                path,
-                status_code["code"],
-            )
+            # Prefer the authenticated identity ("master"/username) set during
+            # auth; fall back to an optional X-Admin-Actor label.
+            actor = get_actor()
+            if actor is None:
+                raw_actor = headers.get(b"x-admin-actor")
+                actor = raw_actor.decode("latin-1")[:150] if raw_actor else None
+            await self._audit(request_id, actor, method, path, status_code["code"])
 
     async def _audit(self, request_id, actor, method, path, status) -> None:
         # Never let an audit-write failure affect the already-sent response.

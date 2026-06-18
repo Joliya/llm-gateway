@@ -6,11 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_master_key
+from app.core.auth import require_admin
 from app.db.models import AdminAuditLog, RequestLog
 from app.db.session import get_session
 
-router = APIRouter(dependencies=[Depends(require_master_key)])
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.get("/logs")

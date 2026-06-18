@@ -4,14 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_master_key
+from app.core.auth import require_admin
 from app.core.config_store import config_store
 from app.db.models import Provider
 from app.db.session import get_session
 from app.providers.registry import supported_provider_types
 from app.schemas.admin import ProviderCreate, ProviderOut, ProviderUpdate
 
-router = APIRouter(dependencies=[Depends(require_master_key)])
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.get("/provider-types")

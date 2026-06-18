@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     # Master key protecting the /admin API. Required in production.
     master_key: str = "change-me-master-key"
 
+    # How long a console user session token stays valid after login (hours).
+    session_ttl_hours: float = 12.0
+
     # Fernet key used to encrypt credential api_keys at rest.
     # If empty, a key is derived from master_key (fine for single-node dev).
     encryption_key: str = ""

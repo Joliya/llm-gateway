@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.core.auth import require_master_key
+from app.core.auth import require_admin
 from app.core.circuit_breaker import circuit_breaker
 
-router = APIRouter(dependencies=[Depends(require_master_key)])
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.get("/deployment-health")

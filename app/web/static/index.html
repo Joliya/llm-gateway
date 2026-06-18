@@ -14,10 +14,14 @@
         <span class="dot"></span>
         <span class="wordmark">LLM<b>GATEWAY</b></span>
       </div>
-      <p class="login-sub" data-i18n="Signal router console — authenticate with the master key.">Signal router console — authenticate with the master key.</p>
+      <p class="login-sub" data-i18n="Signal router console — sign in with the master key, or a username + password.">Signal router console — sign in with the master key, or a username + password.</p>
       <label class="field">
-        <span class="field-label" data-i18n="Master key">Master key</span>
-        <input type="password" id="master-key" autocomplete="off" placeholder="GW_MASTER_KEY" required />
+        <span class="field-label" data-i18n="Username">Username</span>
+        <input type="text" id="login-user" autocomplete="username" data-i18n-ph="Leave blank to use the master key" placeholder="Leave blank to use the master key" />
+      </label>
+      <label class="field">
+        <span class="field-label" data-i18n="Master key / password">Master key / password</span>
+        <input type="password" id="master-key" autocomplete="current-password" placeholder="GW_MASTER_KEY" required />
       </label>
       <button class="btn btn-signal" type="submit" data-i18n="Connect">Connect</button>
       <p class="login-err" id="login-err" hidden></p>
@@ -44,9 +48,10 @@
         <a data-route="aliases" class="nav-item"><span class="nav-idx">03</span><span data-i18n="Aliases">Aliases</span></a>
         <a data-route="deployments" class="nav-item"><span class="nav-idx">04</span><span data-i18n="Deployments">Deployments</span></a>
         <a data-route="keys" class="nav-item"><span class="nav-idx">05</span><span data-i18n="Virtual keys">Virtual keys</span></a>
-        <a data-route="logs" class="nav-item"><span class="nav-idx">06</span><span data-i18n="Traffic">Traffic</span></a>
-        <a data-route="analytics" class="nav-item"><span class="nav-idx">07</span><span data-i18n="Analytics">Analytics</span></a>
-        <a data-route="playground" class="nav-item"><span class="nav-idx">08</span><span data-i18n="Playground">Playground</span></a>
+        <a data-route="users" class="nav-item"><span class="nav-idx">06</span><span data-i18n="Users">Users</span></a>
+        <a data-route="logs" class="nav-item"><span class="nav-idx">07</span><span data-i18n="Traffic">Traffic</span></a>
+        <a data-route="analytics" class="nav-item"><span class="nav-idx">08</span><span data-i18n="Analytics">Analytics</span></a>
+        <a data-route="playground" class="nav-item"><span class="nav-idx">09</span><span data-i18n="Playground">Playground</span></a>
       </nav>
       <div class="rail-foot">
         <select class="lang-select" aria-label="Language">

@@ -8,13 +8,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_master_key
+from app.core.auth import require_admin
 from app.core.cost import compute_cost
 from app.core.executor import AllAttemptsFailed, ChatExecutor, build_candidate_aliases
 from app.core.router import RouteNotFound
 from app.db.session import get_session
 
-router = APIRouter(dependencies=[Depends(require_master_key)])
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 class PlaygroundRequest(BaseModel):

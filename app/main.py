@@ -36,6 +36,9 @@ from app.api.admin import (
 from app.api.admin import (
     providers as admin_providers,
 )
+from app.api.admin import (
+    users as admin_users,
+)
 from app.api.v1 import chat, completions, embeddings, models
 from app.config import get_settings
 from app.core import budget as budget_mod
@@ -167,6 +170,8 @@ def create_app() -> FastAPI:
     app.include_router(admin_logs.router, prefix="/admin", tags=["admin:logs"])
     app.include_router(admin_health.router, prefix="/admin", tags=["admin:health"])
     app.include_router(admin_playground.router, prefix="/admin", tags=["admin:playground"])
+    app.include_router(admin_users.login_router, prefix="/admin", tags=["admin:auth"])
+    app.include_router(admin_users.router, prefix="/admin/users", tags=["admin:users"])
 
     # Self-contained admin console (static, no build step). Served last so it
     # never shadows the API routes above.

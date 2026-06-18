@@ -12,6 +12,11 @@ import uuid
 _request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_id", default=None
 )
+# The authenticated admin identity ("master" or a username), set during auth so
+# the audit middleware can attribute the change to the real actor.
+_actor: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "actor", default=None
+)
 
 
 def new_request_id() -> str:
@@ -24,3 +29,11 @@ def set_request_id(value: str) -> None:
 
 def get_request_id() -> str | None:
     return _request_id.get()
+
+
+def set_actor(value: str | None) -> None:
+    _actor.set(value)
+
+
+def get_actor() -> str | None:
+    return _actor.get()

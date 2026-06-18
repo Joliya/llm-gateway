@@ -30,7 +30,10 @@ virtual keys with budgets, usage/cost logging, circuit breaking, and caching.
 - **Usage & cost logging**: per-request token/cost/latency logs + summaries, plus
   an **Analytics** console view (spend/requests by alias and by key).
 - **Observability**: Prometheus `/metrics`, `X-Request-Id` correlation ids, and an
-  **admin audit log** of every mutating `/admin` call.
+  **admin audit log** of every mutating `/admin` call (attributed to the actor).
+- **Console users**: create operator accounts that log in with a username +
+  auto-generated password (managed by the master key); the master can reset any
+  password. Logged-in users get full admin access; audit logs record who acted.
 - **Key management**: rotate a virtual key's secret in place; daily/monthly budget
   windows reset automatically (idle keys swept in the background too).
 - **Response caching**: optional, per-alias overridable.

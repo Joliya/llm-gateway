@@ -166,6 +166,20 @@ class RequestLog(Base):
     upstream_response: Mapped[Any | None] = mapped_column(JSON, nullable=True)
 
 
+class User(Base):
+    """A console operator account. Authenticates with username + password and,
+    once logged in, has the same admin rights as the master key."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(150), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(Text)   # pbkdf2, never the plaintext
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AdminAuditLog(Base):
     """One row per mutating /admin call (POST/PATCH/PUT/DELETE), for accountability."""
 
@@ -189,4 +203,5 @@ __all__ = [
     "VirtualKey",
     "RequestLog",
     "AdminAuditLog",
+    "User",
 ]

@@ -189,3 +189,37 @@ class VirtualKeyOut(BaseModel):
 class VirtualKeyCreated(VirtualKeyOut):
     # Plaintext key, returned exactly once on creation.
     key: str
+
+
+# --- Console users ---
+class UserCreate(BaseModel):
+    username: str = Field(min_length=1, max_length=150)
+
+
+class UserUpdate(BaseModel):
+    enabled: bool | None = None
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    username: str
+    enabled: bool
+    created_at: dt.datetime
+    last_login_at: dt.datetime | None
+
+
+class UserCreated(UserOut):
+    # Auto-generated password, returned exactly once (on create or reset).
+    password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    expires_at: dt.datetime
+    username: str
