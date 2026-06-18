@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Cross-provider reasoning / "thinking" mapping.
 
 Clients speak ONE canonical OpenAI-style field — ``reasoning_effort`` — and the
@@ -17,7 +15,7 @@ Canonical value accepts the level strings ``minimal|low|medium|high|max``,
 unknown is treated as ``medium``.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 CANONICAL_FIELD = "reasoning_effort"
 
@@ -30,7 +28,7 @@ _GEMINI_BUDGET = {"minimal": 512, "low": 2048, "medium": 8192, "high": 24576, "m
 _QWEN_BUDGET = {"minimal": 1024, "low": 4096, "medium": 16384, "high": 32768, "max": 38912}
 
 
-def normalize_level(value: Any) -> Optional[str]:
+def normalize_level(value: Any) -> str | None:
     """Coerce a client value to ``none`` | ``minimal`` | ``low`` | ``medium`` | ``high``.
 
     Returns ``None`` only when there is nothing to interpret (value is ``None``).
@@ -53,21 +51,21 @@ def normalize_level(value: Any) -> Optional[str]:
     return "medium"
 
 
-def pop_effort(params: dict[str, Any]) -> Optional[str]:
+def pop_effort(params: dict[str, Any]) -> str | None:
     """Remove the canonical field from ``params`` and return its normalized level."""
     if CANONICAL_FIELD not in params:
         return None
     return normalize_level(params.pop(CANONICAL_FIELD))
 
 
-def peek_effort(params: dict[str, Any]) -> Optional[str]:
+def peek_effort(params: dict[str, Any]) -> str | None:
     """Read the canonical level without mutating ``params``."""
     if CANONICAL_FIELD not in params:
         return None
     return normalize_level(params.get(CANONICAL_FIELD))
 
 
-def detect_openai_dialect(base_url: Optional[str]) -> str:
+def detect_openai_dialect(base_url: str | None) -> str:
     """Identify which OpenAI-compatible vendor a base_url points at.
 
     Returns one of: ``openai`` | ``qwen`` | ``deepseek`` | ``kimi``.
@@ -83,7 +81,7 @@ def detect_openai_dialect(base_url: Optional[str]) -> str:
     return "openai"
 
 
-def apply_openai_compat(body: dict[str, Any], base_url: Optional[str]) -> None:
+def apply_openai_compat(body: dict[str, Any], base_url: str | None) -> None:
     """Translate the canonical field in-place for an OpenAI-compatible body."""
     level = pop_effort(body)
     if level is None:
@@ -120,14 +118,14 @@ def apply_openai_compat(body: dict[str, Any], base_url: Optional[str]) -> None:
         body["reasoning_effort"] = "high" if level == "max" else level
 
 
-def anthropic_thinking(level: Optional[str]) -> Optional[dict[str, Any]]:
+def anthropic_thinking(level: str | None) -> dict[str, Any] | None:
     """Return Anthropic's ``thinking`` block for a level, or None to leave it off."""
     if level is None or level == "none":
         return None
     return {"type": "enabled", "budget_tokens": _ANTHROPIC_BUDGET[level]}
 
 
-def gemini_thinking_config(level: Optional[str]) -> Optional[dict[str, Any]]:
+def gemini_thinking_config(level: str | None) -> dict[str, Any] | None:
     """Return Gemini's ``thinkingConfig`` for a level, or None to leave it unset."""
     if level is None:
         return None

@@ -40,7 +40,7 @@ async def completions(
     try:
         aliases = await build_candidate_aliases(session, model)
     except RouteNotFound as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
     client: httpx.AsyncClient = request.app.state.http_client
     started = time.monotonic()

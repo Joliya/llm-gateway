@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,15 +23,15 @@ class ResolvedDeployment:
     alias_name: str
     provider_type: str
     upstream_model: str
-    base_url: Optional[str]
+    base_url: str | None
     api_key: str
-    org: Optional[str]
+    org: str | None
     extra_headers: dict[str, str]
     weight: int
-    rpm_limit: Optional[int]
-    tpm_limit: Optional[int]
-    cred_rpm_limit: Optional[int]
-    cred_tpm_limit: Optional[int]
+    rpm_limit: int | None
+    tpm_limit: int | None
+    cred_rpm_limit: int | None
+    cred_tpm_limit: int | None
     credential_id: int
     pinned_params: dict[str, Any]
     default_params: dict[str, Any]
@@ -45,7 +45,7 @@ class ResolvedAlias:
     name: str
     lb_strategy: str
     fallback_aliases: list[str]
-    cache_enabled: Optional[bool]
+    cache_enabled: bool | None
     deployments: list[ResolvedDeployment] = field(default_factory=list)
 
 

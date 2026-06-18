@@ -16,8 +16,8 @@ _ADAPTERS: dict[str, ProviderAdapter] = {
 def get_adapter(provider_type: str) -> ProviderAdapter:
     try:
         return _ADAPTERS[provider_type]
-    except KeyError:
-        raise ValueError(f"Unknown provider_type: {provider_type!r}")
+    except KeyError as exc:
+        raise ValueError(f"Unknown provider_type: {provider_type!r}") from exc
 
 
 def supported_provider_types() -> list[str]:

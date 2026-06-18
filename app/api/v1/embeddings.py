@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.auth import authenticate_virtual_key, key_may_use_alias
 from app.core.circuit_breaker import circuit_breaker
-from app.core.executor import build_candidate_aliases, _iter_attempts, _prepare_params
+from app.core.executor import _iter_attempts, _prepare_params, build_candidate_aliases
 from app.core.logging_service import log_request
 from app.core.router import RouteNotFound
 from app.db.models import VirtualKey
@@ -39,7 +39,7 @@ async def embeddings(
     try:
         aliases = await build_candidate_aliases(session, model)
     except RouteNotFound as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
     client: httpx.AsyncClient = request.app.state.http_client
     started = time.monotonic()
@@ -53,9 +53,9 @@ async def embeddings(
                 base_url=dep.base_url, api_key=dep.api_key, org=dep.org,
                 extra_headers=dep.extra_headers, upstream_model=dep.upstream_model, params=params,
             )
-        except NotImplementedError:
+        except NotImplementedError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                                f"Provider {dep.provider_type} does not support embeddings")
+                                f"Provider {dep.provider_type} does not support embeddings") from exc
         try:
             resp = await client.request(req.method, req.url, headers=req.headers, json=req.json,
                                         timeout=_settings.request_timeout)

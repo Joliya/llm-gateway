@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -20,8 +20,8 @@ router = APIRouter(dependencies=[Depends(require_master_key)])
 class PlaygroundRequest(BaseModel):
     model: str
     messages: list[dict[str, Any]]
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
+    temperature: float | None = None
+    max_tokens: int | None = None
 
 
 @router.post("/playground/chat")

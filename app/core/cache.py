@@ -4,7 +4,7 @@ import hashlib
 import json
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 from app.config import get_settings
 
@@ -25,7 +25,7 @@ class MemoryCache:
         self._store: dict[str, tuple[float, dict]] = {}
         self._lock = threading.Lock()
 
-    async def get(self, key: str) -> Optional[dict]:
+    async def get(self, key: str) -> dict | None:
         with self._lock:
             item = self._store.get(key)
             if item is None:
@@ -45,7 +45,7 @@ class RedisCache:
     def __init__(self, client) -> None:
         self._r = client
 
-    async def get(self, key: str) -> Optional[dict]:
+    async def get(self, key: str) -> dict | None:
         raw = await self._r.get(key)
         return json.loads(raw) if raw else None
 
@@ -57,7 +57,7 @@ class _CacheProxy:
     def __init__(self) -> None:
         self.backend = MemoryCache()
 
-    async def get(self, key: str) -> Optional[dict]:
+    async def get(self, key: str) -> dict | None:
         return await self.backend.get(key)
 
     async def set(self, key: str, value: dict, ttl: int | None = None) -> None:
@@ -67,7 +67,7 @@ class _CacheProxy:
 response_cache = _CacheProxy()
 
 
-def cache_enabled_for(alias_cache_flag: Optional[bool]) -> bool:
+def cache_enabled_for(alias_cache_flag: bool | None) -> bool:
     """Per-alias override wins; otherwise fall back to the global default."""
     if alias_cache_flag is not None:
         return alias_cache_flag

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -19,8 +19,8 @@ class ChatCompletionRequest(BaseModel):
     model: str
     messages: list[ChatMessage]
     stream: bool = False
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
+    temperature: float | None = None
+    max_tokens: int | None = None
 
     def to_upstream_dict(self) -> dict[str, Any]:
         """Full param dict including extras, dropping None top-level fields."""

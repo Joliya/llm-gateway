@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import budget as budget_mod
 from app.core.auth import authenticate_virtual_key, key_may_use_alias
 from app.core.cache import cache_enabled_for, make_cache_key, response_cache
-from app.core.executor import AllAttemptsFailed, ChatExecutor, build_candidate_aliases
 from app.core.cost import compute_cost
+from app.core.executor import AllAttemptsFailed, ChatExecutor, build_candidate_aliases
 from app.core.logging_service import log_request
 from app.core.router import RouteNotFound
 from app.db.models import VirtualKey
@@ -45,7 +45,7 @@ async def chat_completions(
     try:
         aliases = await build_candidate_aliases(session, model)
     except RouteNotFound as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
     primary = aliases[0]
     client = request.app.state.http_client

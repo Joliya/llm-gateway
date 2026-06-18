@@ -9,7 +9,7 @@ from app.core.circuit_breaker import circuit_breaker
 from app.core.config_store import ResolvedDeployment
 
 # Per-alias round-robin cursors and in-flight counters.
-_rr_counters: dict[str, "itertools.count"] = defaultdict(lambda: itertools.count())
+_rr_counters: dict[str, itertools.count] = defaultdict(lambda: itertools.count())
 _inflight: dict[int, int] = defaultdict(int)
 _lock = threading.Lock()
 
@@ -40,7 +40,9 @@ def order_deployments(
     return ordered + broken
 
 
-def _apply_strategy(alias_name: str, deployments: list[ResolvedDeployment], strategy: str) -> list[ResolvedDeployment]:
+def _apply_strategy(
+    alias_name: str, deployments: list[ResolvedDeployment], strategy: str
+) -> list[ResolvedDeployment]:
     if not deployments:
         return []
 

@@ -138,6 +138,9 @@ class GeminiAdapter(ProviderAdapter):
             cands = event.get("candidates") or [{}]
             finish = cands[0].get("finishReason")
             if text:
-                yield {**base_chunk, "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}]}
+                choice = {"index": 0, "delta": {"content": text}, "finish_reason": None}
+                yield {**base_chunk, "choices": [choice]}
             if finish:
-                yield {**base_chunk, "choices": [{"index": 0, "delta": {}, "finish_reason": _FINISH_MAP.get(finish, "stop")}]}
+                choice = {"index": 0, "delta": {},
+                          "finish_reason": _FINISH_MAP.get(finish, "stop")}
+                yield {**base_chunk, "choices": [choice]}

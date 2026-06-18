@@ -136,10 +136,14 @@ class AnthropicAdapter(ProviderAdapter):
             if etype == "content_block_delta":
                 delta = event.get("delta", {})
                 if delta.get("type") == "text_delta":
-                    yield {**base_chunk, "choices": [{"index": 0, "delta": {"content": delta.get("text", "")}, "finish_reason": None}]}
+                    choice = {"index": 0, "delta": {"content": delta.get("text", "")},
+                              "finish_reason": None}
+                    yield {**base_chunk, "choices": [choice]}
             elif etype == "message_delta":
                 stop = event.get("delta", {}).get("stop_reason")
                 if stop:
-                    yield {**base_chunk, "choices": [{"index": 0, "delta": {}, "finish_reason": _FINISH_MAP.get(stop, "stop")}]}
+                    choice = {"index": 0, "delta": {},
+                              "finish_reason": _FINISH_MAP.get(stop, "stop")}
+                    yield {**base_chunk, "choices": [choice]}
             elif etype == "message_stop":
                 break

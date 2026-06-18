@@ -48,8 +48,8 @@ async def authenticate_virtual_key(
     if vk.expires_at is not None:
         expires = vk.expires_at
         if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=dt.timezone.utc)
-        if expires < dt.datetime.now(dt.timezone.utc):
+            expires = expires.replace(tzinfo=dt.UTC)
+        if expires < dt.datetime.now(dt.UTC):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key expired")
 
     return vk

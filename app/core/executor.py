@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,8 +30,8 @@ class UpstreamError(Exception):
 
 
 class AllAttemptsFailed(Exception):
-    def __init__(self, status_code: int, body: str, *, deployment: Optional[ResolvedDeployment] = None,
-                 upstream_url: Optional[str] = None, upstream_request: Optional[dict[str, Any]] = None,
+    def __init__(self, status_code: int, body: str, *, deployment: ResolvedDeployment | None = None,
+                 upstream_url: str | None = None, upstream_request: dict[str, Any] | None = None,
                  upstream_response: Any = None):
         super().__init__(body)
         self.status_code = status_code
@@ -48,8 +48,8 @@ class ChatResult:
     deployment: ResolvedDeployment
     usage: Usage
     retries: int
-    upstream_url: Optional[str] = None
-    upstream_request: Optional[dict[str, Any]] = None
+    upstream_url: str | None = None
+    upstream_request: dict[str, Any] | None = None
     upstream_response: Any = None
 
 
@@ -60,8 +60,8 @@ class StreamResult:
     # usage is populated as the stream is consumed
     usage: Usage = field(default_factory=Usage)
     retries: int = 0
-    upstream_url: Optional[str] = None
-    upstream_request: Optional[dict[str, Any]] = None
+    upstream_url: str | None = None
+    upstream_request: dict[str, Any] | None = None
 
 
 async def build_candidate_aliases(session: AsyncSession, model: str) -> list[ResolvedAlias]:
@@ -85,7 +85,7 @@ async def build_candidate_aliases(session: AsyncSession, model: str) -> list[Res
     return out
 
 
-async def _rate_limit_ok(vk_id: Optional[int], dep: ResolvedDeployment, vk_rpm, vk_tpm) -> bool:
+async def _rate_limit_ok(vk_id: int | None, dep: ResolvedDeployment, vk_rpm, vk_tpm) -> bool:
     """Pre-flight RPM checks (+ TPM not-yet-exceeded). Tokens are recorded after."""
     checks = [
         (f"dep:{dep.deployment_id}:rpm", dep.rpm_limit, 1),
@@ -102,7 +102,7 @@ async def _rate_limit_ok(vk_id: Optional[int], dep: ResolvedDeployment, vk_rpm, 
     return True
 
 
-async def record_tokens(vk_id: Optional[int], dep: ResolvedDeployment, total_tokens: int) -> None:
+async def record_tokens(vk_id: int | None, dep: ResolvedDeployment, total_tokens: int) -> None:
     await rate_limiter.add(f"dep:{dep.deployment_id}:tpm", total_tokens)
     await rate_limiter.add(f"cred:{dep.credential_id}:tpm", total_tokens)
     if vk_id is not None:
@@ -128,8 +128,8 @@ def _iter_attempts(aliases: list[ResolvedAlias]) -> list[ResolvedDeployment]:
 
 
 class ChatExecutor:
-    def __init__(self, session: AsyncSession, client: httpx.AsyncClient, vk_id: Optional[int],
-                 vk_rpm: Optional[int], vk_tpm: Optional[int]):
+    def __init__(self, session: AsyncSession, client: httpx.AsyncClient, vk_id: int | None,
+                 vk_rpm: int | None, vk_tpm: int | None):
         self.session = session
         self.client = client
         self.vk_id = vk_id
@@ -140,9 +140,9 @@ class ChatExecutor:
         attempts = _iter_attempts(aliases)
         last_status, last_body = 502, "no upstream available"
         # Track the most recent attempt's upstream I/O so failures are auditable too.
-        last_dep: Optional[ResolvedDeployment] = None
-        last_url: Optional[str] = None
-        last_req: Optional[dict[str, Any]] = None
+        last_dep: ResolvedDeployment | None = None
+        last_url: str | None = None
+        last_req: dict[str, Any] | None = None
         last_resp: Any = None
         retries = 0
         for i, dep in enumerate(attempts):
@@ -168,7 +168,8 @@ class ChatExecutor:
                 )
             except httpx.HTTPError as exc:
                 circuit_breaker.record_failure(dep.deployment_id)
-                last_status, last_body, last_resp = 502, f"connection error: {exc}", f"connection error: {exc}"
+                msg = f"connection error: {exc}"
+                last_status, last_body, last_resp = 502, msg, msg
                 continue
             finally:
                 decr_inflight(dep.deployment_id)
@@ -205,9 +206,9 @@ class ChatExecutor:
         """Open the upstream stream, falling back only until the first byte."""
         attempts = _iter_attempts(aliases)
         last_status, last_body = 502, "no upstream available"
-        last_dep: Optional[ResolvedDeployment] = None
-        last_url: Optional[str] = None
-        last_req: Optional[dict[str, Any]] = None
+        last_dep: ResolvedDeployment | None = None
+        last_url: str | None = None
+        last_req: dict[str, Any] | None = None
         retries = 0
         for i, dep in enumerate(attempts):
             if i > 0:
