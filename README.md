@@ -1,5 +1,8 @@
 # llm-gateway
 
+[![CI](https://github.com/Joliya/llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/Joliya/llm-gateway/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 A lightweight, self-hosted **LLM proxy** — a simpler alternative to LiteLLM.
 Exposes an OpenAI-compatible API, manages multiple providers/credentials from a
 database, and adds load balancing, rate limiting, fallbacks, param pinning,
@@ -24,7 +27,12 @@ virtual keys with budgets, usage/cost logging, circuit breaking, and caching.
 - **Circuit breaking**: cool down unhealthy deployments automatically.
 - **Virtual keys**: issue per-client keys with allowed models, RPM/TPM limits,
   and total/daily/monthly budgets.
-- **Usage & cost logging**: per-request token/cost/latency logs + summaries.
+- **Usage & cost logging**: per-request token/cost/latency logs + summaries, plus
+  an **Analytics** console view (spend/requests by alias and by key).
+- **Observability**: Prometheus `/metrics`, `X-Request-Id` correlation ids, and an
+  **admin audit log** of every mutating `/admin` call.
+- **Key management**: rotate a virtual key's secret in place; daily/monthly budget
+  windows reset automatically (idle keys swept in the background too).
 - **Response caching**: optional, per-alias overridable.
 - **Storage**: SQLite + in-memory out of the box; switch to Postgres + Redis via
   env vars for multi-instance deployments.
@@ -117,10 +125,20 @@ alembic upgrade head
 In development, `GW_AUTO_CREATE_TABLES=true` (the default) creates tables on
 startup so you can skip migrations entirely. Use one or the other, not both.
 
+## Observability
+
+- `GET /metrics` — Prometheus metrics (requests, latency, tokens, cost, cache
+  hits, async-log queue). Disable with `GW_METRICS_ENABLED=false`.
+- Every response carries an `X-Request-Id` (accepted from the client or
+  generated) that's also stored on each request log for tracing.
+- Mutating `/admin` calls are recorded to an audit log (`GET /admin/audit`); send
+  an `X-Admin-Actor` header to label who made the change.
+
 ## Tests
 
 ```bash
 pip install -e ".[dev]"
+ruff check app tests
 pytest
 ```
 
@@ -135,3 +153,10 @@ client → auth(virtual key) → budget → rate limit → router(alias | provid
 Key modules live under `app/core/` (router, load_balancer, rate_limiter,
 executor, circuit_breaker, budget, cache, cost), `app/providers/` (vendor
 adapters), and `app/api/` (`v1/` proxy + `admin/` management).
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a deeper tour and
+[`CONTRIBUTING.md`](CONTRIBUTING.md) to get set up for development.
+
+## License
+
+[MIT](LICENSE).
