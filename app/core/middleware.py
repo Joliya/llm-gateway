@@ -31,6 +31,11 @@ class RequestContextMiddleware:
         request_id = raw_id.decode("latin-1")[:64] if raw_id else new_request_id()
         set_request_id(request_id)
 
+        # The static console has no build step / content hashing, so force the
+        # browser to revalidate it (ETag still yields cheap 304s) — otherwise a
+        # cached app.js goes stale after an upgrade.
+        is_console = scope.get("path", "").startswith("/ui")
+
         status_code = {"code": 0}
 
         async def send_wrapper(message):
@@ -38,6 +43,8 @@ class RequestContextMiddleware:
                 status_code["code"] = message["status"]
                 resp_headers = list(message.get("headers") or [])
                 resp_headers.append((b"x-request-id", request_id.encode("latin-1")))
+                if is_console:
+                    resp_headers.append((b"cache-control", b"no-cache"))
                 message["headers"] = resp_headers
             await send(message)
 
