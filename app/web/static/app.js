@@ -2,8 +2,12 @@
 
 // ------------------------------------------------------------------ state
 const KEY_STORE = "gw_master_key";
+const ROLE_STORE = "gw_is_master";
 const LANG_STORE = "gw_lang";
 let MASTER = sessionStorage.getItem(KEY_STORE) || "";
+// Whether the session is the master key (vs a logged-in user). Only the master
+// may manage users; this drives the UI (the backend enforces it regardless).
+let IS_MASTER = sessionStorage.getItem(ROLE_STORE) !== "false";
 let ROUTE = "overview";
 const ref = { providers: [], aliases: [], credentials: [], providerTypes: [] };
 
@@ -118,6 +122,7 @@ const I18N = {
     "Console operator accounts. Each logs in with a username + auto-generated password and has full admin access. The password is shown once on creation or reset.":
       "控制台操作员账号。每个账号用 用户名 + 自动生成的密码 登录,拥有完整管理权限。密码仅在创建或重置时显示一次。",
     "No users yet. Create the first one.": "还没有用户,先创建一个。",
+    "User management requires the master key.": "用户管理需要主密钥。",
     "Created": "创建时间", "Last login": "最近登录", "Reset password": "重置密码",
     "Disable": "禁用", "Enable": "启用",
     "User created": "用户已创建", "Password reset": "密码已重置",
@@ -429,7 +434,11 @@ async function renderView(route) {
     if (route === "overview") return await renderOverview(content, crumb);
     if (route === "analytics") return await renderAnalytics(content, crumb);
     if (route === "logs") return await renderLogs(content, crumb);
-    if (route === "users") return await renderUsers(content, crumb);
+    if (route === "users") {
+      crumb.textContent = t("Users");
+      if (!IS_MASTER) { content.append(el("div", { class: "empty" }, t("User management requires the master key."))); return; }
+      return await renderUsers(content, crumb);
+    }
     if (route === "playground") return await renderPlayground(content, crumb);
     return await renderCrud(route, content, crumb);
   } catch (e) {
@@ -1151,11 +1160,15 @@ function showApp() {
   $("#login").hidden = true;
   $("#app").hidden = false;
   $("#status-text").textContent = location.host;
+  // Only the master may manage users — hide the nav entry otherwise.
+  const usersNav = document.querySelector('.nav-item[data-route="users"]');
+  if (usersNav) usersNav.style.display = IS_MASTER ? "" : "none";
   renderView(location.hash.slice(1) || "overview");
 }
 function logout() {
   MASTER = "";
   sessionStorage.removeItem(KEY_STORE);
+  sessionStorage.removeItem(ROLE_STORE);
   $("#app").hidden = true;
   $("#login").hidden = false;
   $("#master-key").value = "";
@@ -1172,12 +1185,15 @@ async function tryLogin(username, secret) {
     });
     if (!res.ok) throw new Error(t("Invalid username or password"));
     MASTER = (await res.json()).token;
+    IS_MASTER = false;
   } else {
     // Master-key login: the key is itself the bearer.
     MASTER = secret;
     await api("GET", "/admin/providers/provider-types");  // validate
+    IS_MASTER = true;
   }
   sessionStorage.setItem(KEY_STORE, MASTER);
+  sessionStorage.setItem(ROLE_STORE, String(IS_MASTER));
   showApp();
 }
 

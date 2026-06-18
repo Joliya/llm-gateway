@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.core.auth import require_admin
+from app.core.auth import require_master
 from app.core.security import (
     generate_password,
     hash_password,
@@ -53,8 +53,8 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_sessi
     )
 
 
-# User management — requires an authenticated admin (master key or a user session).
-router = APIRouter(dependencies=[Depends(require_admin)])
+# User management is master-only — a logged-in user cannot manage other users.
+router = APIRouter(dependencies=[Depends(require_master)])
 
 
 @router.get("", response_model=list[UserOut])

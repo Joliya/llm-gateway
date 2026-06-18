@@ -40,6 +40,18 @@ async def require_admin(
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired credentials")
 
 
+def require_master(authorization: str | None = Header(default=None)) -> str:
+    """Stricter guard for master-only operations (e.g. user management): the
+    master key, never a user session. Logged-in users are forbidden."""
+    token = _extract_bearer(authorization)
+    if not token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing credentials")
+    if token != _settings.master_key:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "User management requires the master key")
+    set_actor("master")
+    return "master"
+
+
 def _extract_bearer(authorization: str | None) -> str | None:
     if not authorization:
         return None
