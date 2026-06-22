@@ -558,7 +558,7 @@ async function renderOverview(content, crumb) {
     }
     content.append(el("div", { class: "panel" }, el("div", { class: "table-wrap" }, el("table", {},
       el("thead", {}, el("tr", {},
-        el("th", {}, t("Alias")), el("th", {}, t("Requests")), el("th", {}, t("Tokens")), el("th", {}, t("Cost")), el("th", {}, t("Avg latency")))),
+        el("th", {}, t("Alias")), el("th", { class: "cell-num" }, t("Requests")), el("th", { class: "cell-num" }, t("Tokens")), el("th", { class: "cell-num" }, t("Cost")), el("th", { class: "cell-num" }, t("Avg latency")))),
       tb))));
   }
 
@@ -582,7 +582,7 @@ async function renderOverview(content, crumb) {
       ));
     }
     content.append(el("div", { class: "panel" }, el("div", { class: "table-wrap" }, el("table", {},
-      el("thead", {}, el("tr", {}, el("th", {}, t("Deployment")), el("th", {}, t("State")), el("th", {}, t("Failures")), el("th", {}, t("Cooldown")))),
+      el("thead", {}, el("tr", {}, el("th", {}, t("Deployment")), el("th", {}, t("State")), el("th", { class: "cell-num" }, t("Failures")), el("th", { class: "cell-num" }, t("Cooldown")))),
       tb))));
   }
 }
@@ -695,7 +695,7 @@ async function renderAnalytics(content, crumb) {
       host.append(el("div", { class: "panel" }, el("div", { class: "table-wrap" }, el("table", {},
         el("thead", {}, el("tr", {},
           el("th", {}, t("Time")), el("th", {}, t("Method")), el("th", {}, t("Path")),
-          el("th", {}, t("Status")), el("th", {}, t("Actor")))),
+          el("th", { class: "cell-num" }, t("Status")), el("th", {}, t("Actor")))),
         tb))));
     }
   }
@@ -821,7 +821,7 @@ async function renderLogs(content, crumb) {
     tableHost.append(el("div", { class: "table-wrap" }, el("table", {},
       el("thead", {}, el("tr", {},
         el("th", {}, t("Time")), el("th", {}, t("Status")), el("th", {}, t("Alias / model")), el("th", {}, t("Provider")),
-        el("th", {}, t("Tokens")), el("th", {}, t("Cost")), el("th", {}, t("Latency")), el("th", {}, t("Retries")), el("th", {}, t("Cache")))),
+        el("th", { class: "cell-num" }, t("Tokens")), el("th", { class: "cell-num" }, t("Cost")), el("th", { class: "cell-num" }, t("Latency")), el("th", { class: "cell-num" }, t("Retries")), el("th", {}, t("Cache")))),
       tb)));
   }
 
