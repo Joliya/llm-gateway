@@ -13,7 +13,7 @@ def _dep(did: int, weight: int = 1):
     from app.core.config_store import ResolvedDeployment
 
     return ResolvedDeployment(
-        deployment_id=did, alias_name="a", provider_type="openai_compat",
+        deployment_id=did, alias_name="a", provider_name="p", provider_type="openai_compat",
         upstream_model="m", base_url=None, api_key="k", org=None, extra_headers={},
         weight=weight, rpm_limit=None, tpm_limit=None, cred_rpm_limit=None,
         cred_tpm_limit=None, credential_id=did, pinned_params={}, default_params={},

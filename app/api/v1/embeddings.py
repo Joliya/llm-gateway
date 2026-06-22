@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.auth import authenticate_virtual_key, key_may_use_alias
 from app.core.circuit_breaker import circuit_breaker
+from app.core.cost import compute_cost, cost_headers
 from app.core.executor import _iter_attempts, _prepare_params, build_candidate_aliases
 from app.core.logging_service import log_request
 from app.core.router import RouteNotFound
@@ -73,10 +74,11 @@ async def embeddings(
         circuit_breaker.record_success(dep.deployment_id)
         data = resp.json()
         usage = adapter.extract_usage(data) if data.get("usage") else Usage()
+        cost = compute_cost(usage, dep.input_price, dep.output_price)
         await log_request(session, virtual_key_id=vk.id, requested_model=model, deployment=dep,
-                          usage=usage, status=200, cost=0.0,
+                          usage=usage, status=200, cost=cost,
                           latency_ms=int((time.monotonic() - started) * 1000), retries=0)
         await session.commit()
-        return JSONResponse(data)
+        return JSONResponse(data, headers=cost_headers(cost))
 
     return JSONResponse({"error": {"message": last_body}}, status_code=last_status)

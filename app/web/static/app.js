@@ -806,7 +806,11 @@ async function renderLogs(content, crumb) {
         el("td", { class: "cell-muted" }, new Date(r.ts).toLocaleString()),
         el("td", {}, el("span", { class: "pill " + (ok ? "on" : "err") }, String(r.status))),
         el("td", { class: "cell-strong" }, r.alias || r.requested_model),
-        el("td", { class: "cell-muted" }, r.provider_type || "—"),
+        el("td", { class: "cell-muted" },
+          r.provider_name
+            ? el("span", {}, el("span", { class: "cell-strong" }, r.provider_name),
+                r.provider_type ? el("span", { class: "cell-muted" }, " · " + r.provider_type) : null)
+            : (r.provider_type || "—")),
         el("td", { class: "cell-num" }, (r.total_tokens || 0).toLocaleString()),
         el("td", { class: "cell-num" }, fmt.money(r.cost)),
         el("td", { class: "cell-num cell-muted" }, (r.latency_ms || 0) + " ms"),
@@ -854,8 +858,11 @@ async function showLogDetail(id) {
   form.innerHTML = "";
   $("#modal-err").hidden = true;
 
+  const routed = (r.provider_name || r.provider_type || "—")
+    + (r.provider_name && r.provider_type ? " (" + r.provider_type + ")" : "")
+    + (r.credential_id != null ? " · cred #" + r.credential_id : "");
   const meta = el("div", { class: "io-meta" },
-    el("span", {}, (r.provider_type || "—") + " · " + (r.alias || r.requested_model)),
+    el("span", {}, routed + " · " + (r.alias || r.requested_model)),
     el("span", { class: "pill " + (r.status === 200 ? "on" : "err") }, String(r.status)),
     el("span", { class: "cell-muted" }, (r.total_tokens || 0).toLocaleString() + " tok · $" + Number(r.cost || 0).toFixed(4) + " · " + (r.latency_ms || 0) + " ms"),
   );

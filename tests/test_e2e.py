@@ -159,6 +159,43 @@ async def test_prefix_routing_costed_from_provider_price_book(app_client):
 
 
 @respx.mock
+async def test_cost_response_header_matches_logged_cost(app_client):
+    # litellm convention: emit cost as x-litellm-response-cost so litellm-based
+    # clients (dspy.LM) forward it into Opik with no client change.
+    respx.post("https://up.test/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=_openai_response())  # usage 10/5, gpt-x priced 1/2
+    )
+    r = await app_client.post("/v1/chat/completions", json={
+        "model": "mockoai/gpt-x", "messages": [{"role": "user", "content": "x"}],
+    })
+    assert r.status_code == 200, r.text
+    header_cost = float(r.headers["x-litellm-response-cost"])  # must parse as float
+    assert header_cost == pytest.approx(2e-5)  # 10/1e6*1 + 5/1e6*2
+    logs = (await app_client.get("/admin/logs?limit=1", headers=MASTER_HEADERS)).json()
+    assert header_cost == pytest.approx(logs[0]["cost"])
+
+
+@respx.mock
+async def test_log_records_resolved_provider_and_credential(app_client):
+    # "balanced" load-balances over two credentials (c1/c2) of provider mockoai;
+    # the log must pin down which provider + credential actually served it.
+    respx.post("https://up.test/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=_openai_response())
+    )
+    r = await app_client.post("/v1/chat/completions", json={
+        "model": "balanced", "messages": [{"role": "user", "content": "x"}],
+    })
+    assert r.status_code == 200, r.text
+
+    log = (await app_client.get("/admin/logs?limit=1", headers=MASTER_HEADERS)).json()[0]
+    assert log["provider_name"] == "mockoai"
+    assert log["credential_id"] is not None  # the concrete credential picked by LB
+    detail = (await app_client.get(f"/admin/logs/{log['id']}", headers=MASTER_HEADERS)).json()
+    assert detail["provider_name"] == "mockoai"
+    assert detail["credential_id"] == log["credential_id"]
+
+
+@respx.mock
 async def test_streaming(app_client):
     sse = (
         'data: {"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}\n\n'

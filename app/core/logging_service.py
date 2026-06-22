@@ -54,6 +54,8 @@ def _build_payload(
         "deployment_id": (
             deployment.deployment_id if deployment and deployment.deployment_id > 0 else None
         ),
+        "provider_name": deployment.provider_name if deployment else None,
+        "credential_id": deployment.credential_id if deployment else None,
         "provider_type": deployment.provider_type if deployment else None,
         "status": status,
         "prompt_tokens": usage.prompt_tokens,

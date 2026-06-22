@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import budget as budget_mod
 from app.core.auth import authenticate_virtual_key, key_may_use_alias
 from app.core.cache import cache_enabled_for, make_cache_key, response_cache
-from app.core.cost import compute_cost
+from app.core.cost import compute_cost, cost_headers
 from app.core.executor import AllAttemptsFailed, ChatExecutor, build_candidate_aliases
 from app.core.logging_service import log_request
 from app.core.router import RouteNotFound
@@ -64,7 +64,7 @@ async def chat_completions(
                 latency_ms=int((time.monotonic() - started) * 1000), retries=0, cache_hit=True,
             )
             await session.commit()
-            return JSONResponse(cached)
+            return JSONResponse(cached, headers=cost_headers(0.0))
 
     if is_stream:
         return await _stream_response(executor, aliases, body, model, vk, session, started)
@@ -99,7 +99,7 @@ async def chat_completions(
     if cache_key:
         await response_cache.set(cache_key, result.response)
 
-    return JSONResponse(result.response)
+    return JSONResponse(result.response, headers=cost_headers(cost))
 
 
 async def _stream_response(executor, aliases, body, model, vk, session, started):

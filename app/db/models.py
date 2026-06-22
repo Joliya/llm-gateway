@@ -149,6 +149,10 @@ class RequestLog(Base):
     requested_model: Mapped[str] = mapped_column(String(200))
     alias: Mapped[str | None] = mapped_column(String(150), nullable=True)
     deployment_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Which upstream actually served this request (resolved by load balancing /
+    # fallback) — provider name + the specific credential, for routing forensics.
+    provider_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    credential_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     provider_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[int] = mapped_column(Integer, default=200)
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)

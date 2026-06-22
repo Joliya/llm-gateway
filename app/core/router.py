@@ -33,6 +33,7 @@ def _synthetic_alias_from_prefix(snapshot: Snapshot, provider_name: str, model: 
             ResolvedDeployment(
                 deployment_id=-cred.id,  # negative => synthetic, no DB deployment row
                 alias_name=alias_name,
+                provider_name=provider.name,
                 provider_type=provider.provider_type,
                 upstream_model=model,
                 base_url=cred.base_url or provider.default_base_url,

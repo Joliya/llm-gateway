@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     # Record mutating /admin calls (POST/PATCH/PUT/DELETE) to admin_audit_logs.
     admin_audit_enabled: bool = True
+    # Emit the per-request cost as the `x-litellm-response-cost` response header.
+    # litellm-based clients (e.g. dspy.LM) forward it into _hidden_params, so the
+    # cost flows into downstream observability (Opik etc.) with no client changes.
+    # Disable if you don't want to reveal your cost basis to API callers.
+    cost_header_enabled: bool = True
 
     # Background sweep that resets idle keys' daily/monthly budget windows.
     # 0 disables the sweeper (on-access reset_if_needed still runs).

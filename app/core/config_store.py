@@ -21,6 +21,7 @@ class ResolvedDeployment:
 
     deployment_id: int
     alias_name: str
+    provider_name: str
     provider_type: str
     upstream_model: str
     base_url: str | None
@@ -158,6 +159,7 @@ class ConfigStore:
         return ResolvedDeployment(
             deployment_id=d.id,
             alias_name=alias_name,
+            provider_name=prov.name,
             provider_type=prov.provider_type,
             upstream_model=d.upstream_model,
             base_url=cred.base_url or prov.default_base_url,
