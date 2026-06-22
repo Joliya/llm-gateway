@@ -11,9 +11,11 @@ virtual keys with budgets, usage/cost logging, circuit breaking, and caching.
 ## Features
 
 - **OpenAI-compatible surface**: `/v1/chat/completions` (incl. streaming),
-  `/v1/completions`, `/v1/embeddings`, `/v1/models`.
+  `/v1/completions`, `/v1/embeddings`, `/v1/responses` (incl. streaming),
+  `/v1/images/generations`, `/v1/audio/transcriptions`, `/v1/audio/speech`,
+  `/v1/models`.
 - **Multi-provider adapters**: `openai_compat` (OpenAI, Kimi/Moonshot, DeepSeek,
-  通义/DashScope-compatible, vLLM, …), `anthropic`, `gemini`. Params are
+  通义/DashScope, Volcengine/Doubao, vLLM, …), `anthropic`, `gemini`. Params are
   transformed to each vendor's format and responses normalized back to OpenAI.
 - **Alias load balancing**: group multiple deployments under one alias with
   `round_robin` / `weighted` / `least_busy` / `random`.

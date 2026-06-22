@@ -102,6 +102,7 @@ def test_dialect_detection():
     assert detect_openai_dialect("https://dashscope.aliyuncs.com/compatible-mode/v1") == "qwen"
     assert detect_openai_dialect("https://api.deepseek.com/v1") == "deepseek"
     assert detect_openai_dialect("https://api.moonshot.cn/v1") == "kimi"
+    assert detect_openai_dialect("https://ark.cn-beijing.volces.com/api/v3") == "volc"
     assert detect_openai_dialect("https://api.openai.com/v1") == "openai"
     assert detect_openai_dialect(None) == "openai"
 
@@ -133,6 +134,17 @@ def test_deepseek_maps_to_thinking_toggle():
     assert mx["reasoning_effort"] == "max"
     off = _chat(OpenAICompatAdapter(), "https://api.deepseek.com/v1",
                 {"messages": [], "reasoning_effort": "none"})
+    assert off["thinking"] == {"type": "disabled"}
+
+
+def test_volc_maps_to_thinking_toggle():
+    base = "https://ark.cn-beijing.volces.com/api/v3"
+    on = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "low"})
+    assert on["thinking"] == {"type": "enabled"}
+    assert "reasoning_effort" not in on          # Volcengine has no effort levels
+    mx = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "max"})
+    assert mx["thinking"] == {"type": "enabled"}  # any active level -> enabled
+    off = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "none"})
     assert off["thinking"] == {"type": "disabled"}
 
 

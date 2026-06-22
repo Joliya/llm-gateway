@@ -633,3 +633,86 @@ async def test_tool_calling_roundtrip(app_client):
     # tool_calls returned to the client
     out = r.json()["choices"][0]["message"]["tool_calls"]
     assert out[0]["function"]["name"] == "get_weather"
+
+
+# --- responses / images / audio passthrough endpoints ---
+
+@respx.mock
+async def test_responses_passthrough_and_cost(app_client):
+    respx.post("https://up.test/v1/responses").mock(return_value=httpx.Response(200, json={
+        "id": "resp_1", "object": "response", "model": "gpt-x", "output": [],
+        "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+    }))
+    r = await app_client.post("/v1/responses", json={
+        "model": "balanced", "input": "hello",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == "resp_1"
+    # 10/1e6*1 + 5/1e6*2 = 2e-5 (gpt-x priced 1/2), mapped from input/output tokens
+    assert float(r.headers["x-litellm-response-cost"]) == pytest.approx(2e-5)
+
+
+@respx.mock
+async def test_responses_streaming_logs_usage(app_client):
+    sse = (
+        'data: {"type":"response.output_text.delta","delta":"Hel"}\n\n'
+        'data: {"type":"response.completed","response":{"usage":'
+        '{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}\n\n'
+    )
+    respx.post("https://up.test/v1/responses").mock(
+        return_value=httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+    )
+    r = await app_client.post("/v1/responses", json={
+        "model": "balanced", "input": "hi", "stream": True,
+    })
+    assert r.status_code == 200
+    assert "response.completed" in r.text
+    log = (await app_client.get("/admin/logs?limit=1", headers=MASTER_HEADERS)).json()[0]
+    assert log["cost"] == pytest.approx(2e-5)  # usage parsed from the terminal event
+    assert log["provider_name"] == "mockoai"
+
+
+@respx.mock
+async def test_images_generations_passthrough(app_client):
+    respx.post("https://up.test/v1/images/generations").mock(return_value=httpx.Response(200, json={
+        "created": 1, "data": [{"url": "https://img.test/a.png"}],
+    }))
+    r = await app_client.post("/v1/images/generations", json={
+        "model": "balanced", "prompt": "a cat", "n": 1,
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["data"][0]["url"] == "https://img.test/a.png"
+    assert float(r.headers["x-litellm-response-cost"]) == 0.0  # no usage -> cost 0
+
+
+@respx.mock
+async def test_audio_transcriptions_multipart(app_client):
+    captured = {}
+
+    def handler(request: httpx.Request):
+        captured["ctype"] = request.headers.get("content-type", "")
+        return httpx.Response(200, json={"text": "hello world"})
+
+    respx.post("https://up.test/v1/audio/transcriptions").mock(side_effect=handler)
+    r = await app_client.post(
+        "/v1/audio/transcriptions",
+        files={"file": ("a.wav", b"\x00\x01\x02RIFF", "audio/wav")},
+        data={"model": "balanced", "response_format": "json"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["text"] == "hello world"
+    assert captured["ctype"].startswith("multipart/form-data")  # forwarded as multipart
+
+
+@respx.mock
+async def test_audio_speech_binary(app_client):
+    audio_bytes = b"ID3\x04\x00\x00fake-mp3-bytes"
+    respx.post("https://up.test/v1/audio/speech").mock(
+        return_value=httpx.Response(200, content=audio_bytes, headers={"content-type": "audio/mpeg"})
+    )
+    r = await app_client.post("/v1/audio/speech", json={
+        "model": "balanced", "input": "hello", "voice": "alloy",
+    })
+    assert r.status_code == 200, r.text
+    assert r.content == audio_bytes
+    assert r.headers["content-type"] == "audio/mpeg"

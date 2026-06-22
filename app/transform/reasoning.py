@@ -8,6 +8,7 @@ gateway translates it into whatever each upstream actually expects:
     Gemini (2.5)                generationConfig.thinkingConfig: {thinkingBudget: N}
     Qwen / 通义 (DashScope)      enable_thinking: bool + thinking_budget: N
     DeepSeek                    thinking: {type: "enabled"|"disabled"} + reasoning_effort: "high"|"max"
+    Volcengine / 火山方舟 (豆包)   thinking: {type: "enabled"|"disabled"}  (on/off only, no levels)
     Kimi / Moonshot             (model-based; no param — field is dropped)
 
 Canonical value accepts the level strings ``minimal|low|medium|high|max``,
@@ -68,7 +69,7 @@ def peek_effort(params: dict[str, Any]) -> str | None:
 def detect_openai_dialect(base_url: str | None) -> str:
     """Identify which OpenAI-compatible vendor a base_url points at.
 
-    Returns one of: ``openai`` | ``qwen`` | ``deepseek`` | ``kimi``.
+    Returns one of: ``openai`` | ``qwen`` | ``deepseek`` | ``volc`` | ``kimi``.
     Unknown endpoints default to ``openai`` semantics (pass the field through).
     """
     url = (base_url or "").lower()
@@ -76,6 +77,8 @@ def detect_openai_dialect(base_url: str | None) -> str:
         return "qwen"
     if "deepseek" in url:
         return "deepseek"
+    if "volces" in url or "volcengine" in url:
+        return "volc"
     if "moonshot" in url:
         return "kimi"
     return "openai"
@@ -105,6 +108,13 @@ def apply_openai_compat(body: dict[str, Any], base_url: str | None) -> None:
         else:
             body["thinking"] = {"type": "enabled"}
             body["reasoning_effort"] = "max" if level == "max" else "high"
+        return
+
+    if dialect == "volc":
+        # Volcengine Ark / 豆包 (Doubao) toggles reasoning with `thinking.type`
+        # (enabled/disabled) only — no effort levels or budget. Map any active
+        # level to enabled, "none" to disabled.
+        body["thinking"] = {"type": "disabled" if level == "none" else "enabled"}
         return
 
     if dialect == "kimi":

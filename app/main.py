@@ -39,7 +39,7 @@ from app.api.admin import (
 from app.api.admin import (
     users as admin_users,
 )
-from app.api.v1 import chat, completions, embeddings, models
+from app.api.v1 import audio, chat, completions, embeddings, images, models, responses
 from app.config import get_settings
 from app.core import budget as budget_mod
 from app.core import cache as cache_mod
@@ -159,6 +159,9 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, prefix="/v1", tags=["proxy"])
     app.include_router(completions.router, prefix="/v1", tags=["proxy"])
     app.include_router(embeddings.router, prefix="/v1", tags=["proxy"])
+    app.include_router(responses.router, prefix="/v1", tags=["proxy"])
+    app.include_router(images.router, prefix="/v1", tags=["proxy"])
+    app.include_router(audio.router, prefix="/v1", tags=["proxy"])
     app.include_router(models.router, prefix="/v1", tags=["proxy"])
 
     # Management API

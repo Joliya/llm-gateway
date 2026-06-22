@@ -64,7 +64,7 @@ curl -s $BASE/admin/providers -H "$M" -H "$J" -d '{
 
 `provider_type` 可选值（查询 `GET /admin/provider-types` 获取最新列表）：
 
-- `openai_compat` / `openai` — OpenAI 及所有兼容服务（Kimi/Moonshot、DeepSeek、通义/DashScope-compatible、vLLM、Ollama…），靠 `base_url` 区分。
+- `openai_compat` / `openai` — OpenAI 及所有兼容服务（Kimi/Moonshot、DeepSeek、通义/百炼·DashScope、火山方舟/豆包、vLLM、Ollama…），靠 `base_url` 区分。
 - `anthropic` — Claude 原生 API（参数自动在 OpenAI ↔ Anthropic 间转换）。
 - `gemini` — Google Gemini（参数自动在 OpenAI ↔ Gemini 间转换）。
 
@@ -268,12 +268,18 @@ curl http://localhost:8000/v1/chat/completions \
 
 | 端点 | 说明 |
 |------|------|
-| `POST /v1/chat/completions` | 对话补全，支持 `stream: true` |
+| `POST /v1/chat/completions` | 对话补全，支持 `stream: true`（全功能：缓存/预算/思考翻译） |
 | `POST /v1/completions` | 文本补全 |
 | `POST /v1/embeddings` | 向量嵌入 |
+| `POST /v1/responses` | Responses API，支持 `stream: true`（流式用量从末尾 `response.completed` 事件解析） |
+| `POST /v1/images/generations` | 文生图（有 token 用量则计费，如 `gpt-image-1`；`dall-e` 按张计费，记 0） |
+| `POST /v1/audio/transcriptions` | 语音转文字（multipart 上传，返回 JSON 或纯文本） |
+| `POST /v1/audio/speech` | 文字转语音（JSON 入，二进制音频出） |
 | `GET /v1/models` | 列出可用模型（即已配置的 Alias） |
 
 > 跨供应商透明：即便底层打到 Anthropic 或 Gemini，请求与响应都按 OpenAI 格式收发，客户端无需改代码。
+>
+> `/v1/responses`、`/v1/images/generations`、`/v1/audio/*` 为 **OpenAI 协议透传**，仅支持 `openai_compat`/`openai` 类型的上游（百炼/Kimi/火山等都是),并复用与 chat 相同的负载均衡 / 故障转移 / 日志 / cost 头;Anthropic、Gemini 这几个端点会返回 400。
 
 ### 2.7 思考模式 / 推理等级（跨供应商统一字段）
 
@@ -300,6 +306,7 @@ client.chat.completions.create(
 | **Gemini 2.5**（`gemini`） | `generationConfig.thinkingConfig: {thinkingBudget:N}` | `thinkingBudget: 0` |
 | **通义 / Qwen**（base_url 含 `dashscope`/`aliyuncs`） | `enable_thinking: true` + `thinking_budget: N` | `enable_thinking: false` |
 | **DeepSeek**（base_url 含 `deepseek`） | `thinking: {type:"enabled"}` + `reasoning_effort: "high"`（`max` 档 → `"max"`） | `thinking: {type:"disabled"}`（上游默认开启，需显式关闭） |
+| **火山方舟 / 豆包**（base_url 含 `volces`/`volcengine`） | `thinking: {type:"enabled"}`（仅开/关，无等级） | `thinking: {type:"disabled"}` |
 | **Kimi / Moonshot**（base_url 含 `moonshot`） | 丢弃该字段（推理靠选思考模型变体） | — |
 
 各等级对应的 token 预算（budget-based 供应商）：

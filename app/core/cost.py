@@ -27,3 +27,15 @@ def cost_headers(cost: float) -> dict[str, str]:
     if not _settings.cost_header_enabled:
         return {}
     return {COST_HEADER: str(float(cost))}
+
+
+def usage_from_openai(data: dict) -> Usage:
+    """Extract token usage from an OpenAI-style response, tolerating both the
+    chat shape (prompt_tokens/completion_tokens) and the Responses/newer shape
+    (input_tokens/output_tokens). Returns zeros when usage is absent (common for
+    images / audio), which simply yields cost 0."""
+    u = data.get("usage") or {}
+    prompt = u.get("prompt_tokens", u.get("input_tokens", 0)) or 0
+    completion = u.get("completion_tokens", u.get("output_tokens", 0)) or 0
+    total = u.get("total_tokens", prompt + completion) or 0
+    return Usage(prompt_tokens=prompt, completion_tokens=completion, total_tokens=total)
