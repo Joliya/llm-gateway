@@ -7,7 +7,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.providers.base import ProviderAdapter, UpstreamRequest, Usage
-from app.transform.reasoning import anthropic_thinking, peek_effort
+from app.transform.multimodal import openai_content_to_anthropic
+from app.transform.reasoning import resolve_anthropic_thinking
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -53,10 +54,11 @@ class AnthropicAdapter(ProviderAdapter):
         for msg in params.get("messages", []):
             role = msg.get("role")
             if role == "system":
+                # Anthropic's top-level system field is text-only.
                 system_parts.append(_content_to_text(msg.get("content")))
             else:
                 messages.append(
-                    {"role": role, "content": _content_to_text(msg.get("content"))}
+                    {"role": role, "content": openai_content_to_anthropic(msg.get("content"))}
                 )
         if system_parts:
             body["system"] = "\n\n".join(system_parts)
@@ -70,7 +72,7 @@ class AnthropicAdapter(ProviderAdapter):
             stop = params["stop"]
             body["stop_sequences"] = [stop] if isinstance(stop, str) else stop
 
-        thinking = anthropic_thinking(peek_effort(params))
+        thinking = resolve_anthropic_thinking(params)
         if thinking is not None:
             body["thinking"] = thinking
             # Extended thinking requires max_tokens to exceed the thinking budget,

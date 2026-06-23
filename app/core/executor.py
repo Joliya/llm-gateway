@@ -16,6 +16,7 @@ from app.core.load_balancer import decr_inflight, incr_inflight, order_deploymen
 from app.core.rate_limiter import rate_limiter
 from app.providers.base import Usage
 from app.providers.registry import get_adapter
+from app.transform.multimodal import ImageFetchError, normalize_images
 from app.transform.params import apply_param_rules
 
 _settings = get_settings()
@@ -144,6 +145,7 @@ class ChatExecutor:
         last_url: str | None = None
         last_req: dict[str, Any] | None = None
         last_resp: Any = None
+        image_cache: dict[str, str] = {}
         retries = 0
         for i, dep in enumerate(attempts):
             if i > 0:
@@ -155,6 +157,11 @@ class ChatExecutor:
             adapter = get_adapter(dep.provider_type)
             params = _prepare_params(dep, body)
             params.pop("stream", None)
+            try:
+                await normalize_images(self.client, dep, params, cache=image_cache)
+            except ImageFetchError as exc:
+                last_status, last_body, last_dep = 400, str(exc), dep
+                continue
             req = adapter.build_chat_request(
                 base_url=dep.base_url, api_key=dep.api_key, org=dep.org,
                 extra_headers=dep.extra_headers, upstream_model=dep.upstream_model, params=params,
@@ -209,6 +216,7 @@ class ChatExecutor:
         last_dep: ResolvedDeployment | None = None
         last_url: str | None = None
         last_req: dict[str, Any] | None = None
+        image_cache: dict[str, str] = {}
         retries = 0
         for i, dep in enumerate(attempts):
             if i > 0:
@@ -220,6 +228,11 @@ class ChatExecutor:
             adapter = get_adapter(dep.provider_type)
             params = _prepare_params(dep, body)
             params["stream"] = True
+            try:
+                await normalize_images(self.client, dep, params, cache=image_cache)
+            except ImageFetchError as exc:
+                last_status, last_body, last_dep = 400, str(exc), dep
+                continue
             req = adapter.build_chat_request(
                 base_url=dep.base_url, api_key=dep.api_key, org=dep.org,
                 extra_headers=dep.extra_headers, upstream_model=dep.upstream_model, params=params,

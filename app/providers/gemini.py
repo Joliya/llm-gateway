@@ -7,7 +7,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.providers.base import ProviderAdapter, UpstreamRequest, Usage
-from app.transform.reasoning import gemini_thinking_config, peek_effort
+from app.transform.multimodal import openai_content_to_gemini_parts
+from app.transform.reasoning import gemini_thinking_config, resolve_level
 
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 
@@ -53,12 +54,14 @@ class GeminiAdapter(ProviderAdapter):
         system_parts: list[str] = []
         for msg in params.get("messages", []):
             role = msg.get("role")
-            text = _content_to_text(msg.get("content"))
+            content = msg.get("content")
             if role == "system":
-                system_parts.append(text)
+                # Gemini's systemInstruction is text-only.
+                system_parts.append(_content_to_text(content))
             else:
                 contents.append(
-                    {"role": "model" if role == "assistant" else "user", "parts": [{"text": text}]}
+                    {"role": "model" if role == "assistant" else "user",
+                     "parts": openai_content_to_gemini_parts(content)}
                 )
         body: dict[str, Any] = {"contents": contents}
         if system_parts:
@@ -72,7 +75,7 @@ class GeminiAdapter(ProviderAdapter):
             stop = params["stop"]
             gen_config["stopSequences"] = [stop] if isinstance(stop, str) else stop
 
-        thinking_config = gemini_thinking_config(peek_effort(params))
+        thinking_config = gemini_thinking_config(resolve_level(params))
         if thinking_config is not None:
             gen_config["thinkingConfig"] = thinking_config
 

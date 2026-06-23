@@ -17,6 +17,9 @@ virtual keys with budgets, usage/cost logging, circuit breaking, and caching.
 - **Multi-provider adapters**: `openai_compat` (OpenAI, Kimi/Moonshot, DeepSeek,
   通义/DashScope, Volcengine/Doubao, vLLM, …), `anthropic`, `gemini`. Params are
   transformed to each vendor's format and responses normalized back to OpenAI.
+- **Multimodal images**: send OpenAI-style `image_url` blocks to any vision model.
+  The gateway maps them into Anthropic/Gemini native shapes, and downloads remote
+  image URLs to base64 for providers that can't fetch them (Kimi, Gemini).
 - **Alias load balancing**: group multiple deployments under one alias with
   `round_robin` / `weighted` / `least_busy` / `random`.
 - **Prefix routing**: call `provider/model` (e.g. `openai/gpt-4o`,

@@ -137,28 +137,129 @@ def test_deepseek_maps_to_thinking_toggle():
     assert off["thinking"] == {"type": "disabled"}
 
 
-def test_volc_maps_to_thinking_toggle():
+def test_volc_maps_to_reasoning_effort():
     base = "https://ark.cn-beijing.volces.com/api/v3"
+    # Seed 2.0 style: canonical level -> reasoning_effort (no thinking block)
     on = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "low"})
-    assert on["thinking"] == {"type": "enabled"}
-    assert "reasoning_effort" not in on          # Volcengine has no effort levels
+    assert on["reasoning_effort"] == "low"
+    assert "thinking" not in on
     mx = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "max"})
-    assert mx["thinking"] == {"type": "enabled"}  # any active level -> enabled
+    assert mx["reasoning_effort"] == "high"        # clamps to high (no xhigh/max)
     off = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "none"})
+    assert off["reasoning_effort"] == "minimal"    # minimal == no thinking on Volc
+    # Seed 1.6 style: explicit thinking toggle (incl. auto) respected, effort dropped
+    tog = _chat(OpenAICompatAdapter(), base, {"messages": [], "thinking": {"type": "auto"},
+                                              "reasoning_effort": "high"})
+    assert tog["thinking"] == {"type": "auto"}
+    assert "reasoning_effort" not in tog
+
+
+def test_kimi_maps_to_thinking_toggle():
+    # Kimi has no effort levels: any active level -> thinking enabled, effort dropped
+    on = _chat(OpenAICompatAdapter(), "https://api.moonshot.cn/v1",
+               {"messages": [], "reasoning_effort": "high"})
+    assert on["thinking"] == {"type": "enabled"}
+    assert "reasoning_effort" not in on
+    off = _chat(OpenAICompatAdapter(), "https://api.moonshot.cn/v1",
+                {"messages": [], "reasoning_effort": "none"})
     assert off["thinking"] == {"type": "disabled"}
-
-
-def test_kimi_drops_field():
-    body = _chat(OpenAICompatAdapter(), "https://api.moonshot.cn/v1",
-                 {"messages": [], "reasoning_effort": "high"})
-    assert "reasoning_effort" not in body
-    assert "thinking" not in body
+    # nothing specified -> leave it to Kimi's default (thinking on); no field added
+    bare = _chat(OpenAICompatAdapter(), "https://api.moonshot.cn/v1", {"messages": []})
+    assert "thinking" not in bare
+    # native block with extras (preserved thinking) respected verbatim
+    native = _chat(OpenAICompatAdapter(), "https://api.moonshot.cn/v1",
+                   {"messages": [], "thinking": {"type": "enabled", "keep": "all"}})
+    assert native["thinking"] == {"type": "enabled", "keep": "all"}
 
 
 def test_openai_clamps_max_to_high():
     body = _chat(OpenAICompatAdapter(), "https://api.openai.com/v1",
                  {"messages": [], "reasoning_effort": "max"})
     assert body["reasoning_effort"] == "high"
+    xh = _chat(OpenAICompatAdapter(), "https://api.openai.com/v1",
+               {"messages": [], "reasoning_effort": "xhigh"})
+    assert xh["reasoning_effort"] == "high"
+
+
+def test_xhigh_is_a_valid_level():
+    assert normalize_level("xhigh") == "xhigh"
+    # xhigh gets a budget on budget-based providers (Qwen here)
+    body = _chat(OpenAICompatAdapter(), "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 {"messages": [], "reasoning_effort": "xhigh"})
+    assert body["enable_thinking"] is True
+    assert body["thinking_budget"] > 0
+
+
+def test_thinking_type_disabled_turns_off_everywhere():
+    cases = {
+        "https://api.openai.com/v1": lambda b: "reasoning_effort" not in b,
+        "https://dashscope.aliyuncs.com/compatible-mode/v1": lambda b: b["enable_thinking"] is False,
+        "https://api.deepseek.com/v1": lambda b: b["thinking"] == {"type": "disabled"},
+        "https://ark.cn-beijing.volces.com/api/v3": lambda b: b["thinking"] == {"type": "disabled"},
+        "https://api.moonshot.cn/v1": lambda b: b["thinking"] == {"type": "disabled"},
+    }
+    for base, check in cases.items():
+        body = _chat(OpenAICompatAdapter(), base,
+                     {"messages": [], "thinking": {"type": "disabled"}})
+        assert check(body), base
+
+
+def test_thinking_type_enabled_defaults_to_medium():
+    # Qwen: enabled with no level -> medium budget
+    body = _chat(OpenAICompatAdapter(), "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 {"messages": [], "thinking": {"type": "enabled"}})
+    assert body["enable_thinking"] is True
+    assert body["thinking_budget"] == 16384  # _QWEN_BUDGET["medium"]
+    # OpenAI: enabled with no level -> medium
+    oai = _chat(OpenAICompatAdapter(), "https://api.openai.com/v1",
+                {"messages": [], "thinking": {"type": "enabled"}})
+    assert oai["reasoning_effort"] == "medium"
+
+
+def test_native_param_respected_over_canonical():
+    # Qwen native enable_thinking is kept; canonical reasoning_effort stripped
+    qwen = _chat(OpenAICompatAdapter(), "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 {"messages": [], "enable_thinking": False, "reasoning_effort": "high"})
+    assert qwen["enable_thinking"] is False
+    assert "reasoning_effort" not in qwen
+    # DeepSeek native thinking block is kept; reasoning_effort clamped to high
+    ds = _chat(OpenAICompatAdapter(), "https://api.deepseek.com/v1",
+               {"messages": [], "thinking": {"type": "enabled"}, "reasoning_effort": "low"})
+    assert ds["thinking"] == {"type": "enabled"}
+    assert ds["reasoning_effort"] == "high"
+    # Volc keeps the native toggle, drops the foreign reasoning_effort
+    volc = _chat(OpenAICompatAdapter(), "https://ark.cn-beijing.volces.com/api/v3",
+                 {"messages": [], "thinking": {"type": "enabled"}, "reasoning_effort": "low"})
+    assert volc["thinking"] == {"type": "enabled"}
+    assert "reasoning_effort" not in volc
+
+
+def test_anthropic_thinking_type_toggle_and_native_block():
+    # thinking.type disabled -> no block
+    off = _chat(AnthropicAdapter(), None, {"messages": [{"role": "user", "content": "hi"}],
+                                           "thinking": {"type": "disabled"}})
+    assert "thinking" not in off
+    # native block (with budget_tokens) respected verbatim
+    native = _chat(AnthropicAdapter(), None, {"messages": [{"role": "user", "content": "hi"}],
+                                              "thinking": {"type": "enabled", "budget_tokens": 5000}})
+    assert native["thinking"] == {"type": "enabled", "budget_tokens": 5000}
+
+
+def test_gemini_thinking_type_disabled():
+    body = _chat(GeminiAdapter(), None, {"messages": [{"role": "user", "content": "hi"}],
+                                         "thinking": {"type": "disabled"}})
+    assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "minimal"
+
+
+def test_gemini_thinking_level_clamps_and_never_uses_budget():
+    cfg = _chat(GeminiAdapter(), None,
+                {"messages": [], "reasoning_effort": "high"})["generationConfig"]["thinkingConfig"]
+    assert cfg["thinkingLevel"] == "high"
+    assert "thinkingBudget" not in cfg                      # always level, never budget
+    # xhigh/max clamp to high (thinkingLevel only has minimal/low/medium/high)
+    xh = _chat(GeminiAdapter(), None,
+               {"messages": [], "reasoning_effort": "xhigh"})["generationConfig"]["thinkingConfig"]
+    assert xh["thinkingLevel"] == "high"
 
 
 def test_anthropic_maps_to_thinking_block():
@@ -181,7 +282,150 @@ def test_anthropic_no_thinking_when_off():
 def test_gemini_maps_to_thinking_config():
     body = _chat(GeminiAdapter(), None,
                  {"messages": [{"role": "user", "content": "hi"}], "reasoning_effort": "medium"})
-    assert body["generationConfig"]["thinkingConfig"]["thinkingBudget"] > 0
+    assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "medium"
     off = _chat(GeminiAdapter(), None,
                 {"messages": [{"role": "user", "content": "hi"}], "reasoning_effort": "none"})
-    assert off["generationConfig"]["thinkingConfig"]["thinkingBudget"] == 0
+    assert off["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "minimal"
+
+
+# --- multimodal image handling ---
+from app.transform.multimodal import (  # noqa: E402
+    ImageFetchError,
+    has_remote_images,
+    inline_remote_images,
+    normalize_images,
+    openai_content_to_anthropic,
+    openai_content_to_gemini_parts,
+    parse_data_uri,
+)
+
+_IMG_MSG = [{"role": "user", "content": [
+    {"type": "text", "text": "what is this"},
+    {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}},
+]}]
+_DATA_URI = "data:image/png;base64,aGVsbG8="
+
+
+class _FakeResp:
+    def __init__(self, content, ctype="image/png"):
+        self.content = content
+        self.headers = {"content-type": ctype}
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeClient:
+    """Minimal stand-in for httpx.AsyncClient.get used by image inlining."""
+
+    def __init__(self, content=b"hello", ctype="image/png"):
+        self.calls = 0
+        self._content = content
+        self._ctype = ctype
+
+    async def get(self, url, **kw):
+        self.calls += 1
+        return _FakeResp(self._content, self._ctype)
+
+
+def test_parse_data_uri():
+    assert parse_data_uri(_DATA_URI) == ("image/png", "aGVsbG8=")
+    assert parse_data_uri("https://x/y.png") is None
+    assert parse_data_uri("data:image/png;base64,") is None
+
+
+def test_has_remote_images():
+    assert has_remote_images(_IMG_MSG) is True
+    assert has_remote_images([{"role": "user", "content": "plain text"}]) is False
+    data_only = [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": _DATA_URI}}]}]
+    assert has_remote_images(data_only) is False
+
+
+@pytest.mark.asyncio
+async def test_inline_remote_images_downloads_once():
+    client = _FakeClient(content=b"hello")
+    out = await inline_remote_images(client, _IMG_MSG, max_bytes=1024, timeout=5)
+    url = out[0]["content"][1]["image_url"]["url"]
+    assert url == "data:image/png;base64,aGVsbG8="  # base64("hello")
+    # original message left untouched (new structures returned)
+    assert _IMG_MSG[0]["content"][1]["image_url"]["url"].startswith("https://")
+    # cache reuse: a second remote ref to the same url doesn't re-download
+    cache: dict[str, str] = {}
+    msgs = _IMG_MSG + [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}}]}]
+    client2 = _FakeClient()
+    await inline_remote_images(client2, msgs, max_bytes=1024, timeout=5, cache=cache)
+    assert client2.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_inline_rejects_oversized_image():
+    client = _FakeClient(content=b"x" * 100)
+    with pytest.raises(ImageFetchError):
+        await inline_remote_images(client, _IMG_MSG, max_bytes=10, timeout=5)
+
+
+class _Dep:
+    def __init__(self, provider_type, base_url):
+        self.provider_type = provider_type
+        self.base_url = base_url
+
+
+@pytest.mark.asyncio
+async def test_normalize_images_inlines_for_kimi_and_gemini():
+    for dep in (_Dep("openai_compat", "https://api.moonshot.cn/v1"),
+                _Dep("gemini", None)):
+        params = {"messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}}]}]}
+        await normalize_images(_FakeClient(), dep, params)
+        assert params["messages"][0]["content"][0]["image_url"]["url"].startswith("data:")
+
+
+@pytest.mark.asyncio
+async def test_normalize_images_leaves_url_providers_untouched():
+    for dep in (_Dep("openai_compat", "https://api.openai.com/v1"),
+                _Dep("openai_compat", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                _Dep("anthropic", None)):
+        params = {"messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}}]}]}
+        await normalize_images(_FakeClient(), dep, params)
+        assert params["messages"][0]["content"][0]["image_url"]["url"].startswith("https://")
+
+
+def test_anthropic_content_carries_image():
+    blocks = openai_content_to_anthropic([
+        {"type": "text", "text": "hi"},
+        {"type": "image_url", "image_url": {"url": _DATA_URI}},
+        {"type": "image_url", "image_url": {"url": "https://x/y.png"}},
+    ])
+    assert blocks[0] == {"type": "text", "text": "hi"}
+    assert blocks[1]["source"] == {"type": "base64", "media_type": "image/png", "data": "aGVsbG8="}
+    assert blocks[2]["source"] == {"type": "url", "url": "https://x/y.png"}
+    assert openai_content_to_anthropic("plain") == "plain"
+
+
+def test_gemini_parts_carry_inline_image():
+    parts = openai_content_to_gemini_parts([
+        {"type": "text", "text": "hi"},
+        {"type": "image_url", "image_url": {"url": _DATA_URI}},
+        {"type": "image_url", "image_url": {"url": "https://x/y.png"}},  # skipped: not inlined
+    ])
+    assert parts[0] == {"text": "hi"}
+    assert parts[1] == {"inlineData": {"mimeType": "image/png", "data": "aGVsbG8="}}
+    assert len(parts) == 2  # remote url dropped
+
+
+def test_anthropic_adapter_passes_image_through():
+    body = _chat(AnthropicAdapter(), None, {"messages": [{"role": "user", "content": [
+        {"type": "text", "text": "hi"},
+        {"type": "image_url", "image_url": {"url": _DATA_URI}}]}]})
+    content = body["messages"][0]["content"]
+    assert any(b.get("type") == "image" for b in content)
+
+
+def test_gemini_adapter_passes_image_through():
+    body = _chat(GeminiAdapter(), None, {"messages": [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": _DATA_URI}}]}]})
+    parts = body["contents"][0]["parts"]
+    assert parts[0]["inlineData"]["data"] == "aGVsbG8="

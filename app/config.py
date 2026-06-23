@@ -54,6 +54,17 @@ class Settings(BaseSettings):
     max_retries: int = 2                    # retries within an alias pool
     retry_backoff_base: float = 0.5         # exponential backoff base (seconds)
 
+    # --- Multimodal images ---
+    # Some providers can't ingest a remote http(s) URL in an `image_url` content
+    # block: Kimi/Moonshot only accepts base64 data URIs, and Gemini needs the
+    # image bytes inline. When enabled, the gateway downloads such URLs and
+    # re-encodes them as base64 data URIs before forwarding to those providers.
+    # Providers that accept remote URLs natively (OpenAI, Qwen/DashScope,
+    # Volcengine, Anthropic) are left untouched. Disable to always pass URLs as-is.
+    image_fetch_enabled: bool = True
+    image_fetch_max_bytes: int = 10_485_760   # reject images larger than this (10 MiB)
+    image_fetch_timeout: float = 20.0         # per-image download timeout (seconds)
+
     # Circuit breaker
     cb_failure_threshold: int = 5           # consecutive failures before opening
     cb_cooldown_seconds: float = 30.0       # how long a deployment stays cooled down

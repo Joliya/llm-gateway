@@ -283,19 +283,22 @@ curl http://localhost:8000/v1/chat/completions \
 
 ### 2.7 思考模式 / 推理等级（跨供应商统一字段）
 
-各家「思考/推理」的字段都不一样。网关把它们统一成**一个 OpenAI 风格字段 `reasoning_effort`**，客户端只需传它，网关按 provider_type（以及 base_url 识别的兼容厂商）自动翻译成上游真正需要的格式。
+各家「思考/推理」的字段都不一样。网关把它们统一成**两个 OpenAI 风格的控制字段**，客户端任选其一或都传，网关按 provider_type（以及 base_url 识别的兼容厂商）自动翻译成上游真正需要的格式：
 
-**取值**：`"minimal" | "low" | "medium" | "high" | "max"`，或 `"none"`（关闭，同义词 `off`/`false`），也接受布尔值（`true`=medium，`false`=none）。`max` 是为 DeepSeek 等支持「最高档」的供应商预留的等级。
+- **`reasoning_effort`** —— 推理等级，取值 `"minimal" | "low" | "medium" | "high" | "xhigh" | "max"`；或 `"none"`（关闭，同义词 `off`/`false`），也接受布尔值（`true`=medium，`false`=none）。`xhigh`/`max` 是为支持更高档的供应商预留的等级。
+- **`thinking.type`** —— 开关,取值 `"enabled" | "disabled"`。`disabled` 强制关闭推理；`enabled` 开启，等级取 `reasoning_effort`（没传则默认 `medium`）。
 
 ```python
 client.chat.completions.create(
     model="claude-balanced",            # 底层无论是 OpenAI / Claude / Gemini / Qwen
     messages=[{"role": "user", "content": "证明素数有无穷多个"}],
-    reasoning_effort="high",            # 统一字段，网关负责翻译
+    extra_body={"reasoning_effort": "high"},   # 或 {"thinking": {"type": "disabled"}}
 )
 ```
 
-> OpenAI SDK 会校验字段，非其原生字段请放进 `extra_body={"reasoning_effort": "high"}`；`reasoning_effort` 本身是 OpenAI 原生字段，可直接传。
+> OpenAI SDK 会校验字段，`thinking` 这类非原生字段请放进 `extra_body`；`reasoning_effort` 本身是 OpenAI 原生字段，可直接作为顶层参数传。
+>
+> **已传供应商原生参数则不覆盖**：如果客户端直接传了某供应商自己的思考参数（如 Qwen 的 `enable_thinking`、DeepSeek/火山/Kimi 的 `thinking` 块），网关会**尊重该原生值**，跳过上面的「统一字段 → 原生」映射（只清理该供应商不认识的多余统一字段）。所以这两个统一字段是「没传原生参数时的兜底」。
 
 网关的翻译规则：
 
@@ -303,28 +306,62 @@ client.chat.completions.create(
 |------|------|------|
 | **OpenAI / GPT-5 / o 系列**（`openai.com`） | 原样保留 `reasoning_effort` | 不下发该字段 |
 | **Anthropic / Claude**（`anthropic`） | `thinking: {type:"enabled", budget_tokens:N}`，并自动抬高 `max_tokens`、移除 `temperature/top_p/top_k`（思考模式下上游禁止） | 不开启 thinking |
-| **Gemini 2.5**（`gemini`） | `generationConfig.thinkingConfig: {thinkingBudget:N}` | `thinkingBudget: 0` |
+| **Gemini**（`gemini`） | `generationConfig.thinkingConfig: {thinkingLevel:"minimal\|low\|medium\|high"}`（xhigh/max → high） | `thinkingLevel: "minimal"`（Gemini 无硬关闭，取最低档） |
 | **通义 / Qwen**（base_url 含 `dashscope`/`aliyuncs`） | `enable_thinking: true` + `thinking_budget: N` | `enable_thinking: false` |
 | **DeepSeek**（base_url 含 `deepseek`） | `thinking: {type:"enabled"}` + `reasoning_effort: "high"`（`max` 档 → `"max"`） | `thinking: {type:"disabled"}`（上游默认开启，需显式关闭） |
-| **火山方舟 / 豆包**（base_url 含 `volces`/`volcengine`） | `thinking: {type:"enabled"}`（仅开/关，无等级） | `thinking: {type:"disabled"}` |
-| **Kimi / Moonshot**（base_url 含 `moonshot`） | 丢弃该字段（推理靠选思考模型变体） | — |
+| **火山方舟 / 豆包**（base_url 含 `volces`/`volcengine`） | `reasoning_effort`（Seed 2.0：minimal/low/medium/high；xhigh/max → high）；若客户端传了 `thinking` 开关则保留它 | `reasoning_effort: "minimal"`（火山以 minimal 表示不思考） |
+| **Kimi / Moonshot**（base_url 含 `moonshot`） | `thinking: {type:"enabled"}`（无等级，任意档 → 开）；若客户端传了 `thinking` 块则保留它 | `thinking: {type:"disabled"}` |
 
-各等级对应的 token 预算（budget-based 供应商）：
+各等级对应的 token 预算（budget-based 供应商）。Gemini 不在此表 —— 它用 `thinkingLevel` 枚举（minimal/low/medium/high），不吃 token 预算：
 
-| 等级 | Anthropic `budget_tokens` | Gemini `thinkingBudget` | Qwen `thinking_budget` |
-|------|------|------|------|
-| minimal | 1024 | 512 | 1024 |
-| low | 2048 | 2048 | 4096 |
-| medium | 8192 | 8192 | 16384 |
-| high | 16384 | 24576 | 32768 |
-| max | 32000 | 32768 | 38912 |
+| 等级 | Anthropic `budget_tokens` | Qwen `thinking_budget` |
+|------|------|------|
+| minimal | 1024 | 1024 |
+| low | 2048 | 4096 |
+| medium | 8192 | 16384 |
+| high | 16384 | 32768 |
+| xhigh | 24576 | 36864 |
+| max | 32000 | 38912 |
 
 要点：
 
 - **DeepSeek 用请求级开关**（如 `deepseek-v4-pro`，参见[官方文档](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode)）：默认开启思考，网关把 `none` 映射为 `thinking:{type:"disabled"}` 来关闭；其余等级开启思考并下发 `reasoning_effort`（DeepSeek 只接受 `high`/`max`，低于 high 的等级归一到 `high`）。
-- **Kimi 仍是「换模型」而非「传参」**：把 `upstream_model` 设成其思考模型变体即可，`reasoning_effort` 会被安全丢弃，不会让请求报错。
+- **Kimi 用 `thinking` 开关**（k2.5/k2.6 等）：无等级，网关把任意非 `none` 等级映射成 `thinking:{type:"enabled"}`、`none`/`disabled` 映射成 `thinking:{type:"disabled"}`；客户端没传则保持 Kimi 默认（思考开）。客户端自己传的 `thinking` 块（含 `keep:"all"` 这类保留思考的扩展）会被原样尊重。注意 `kimi-k2-thinking`、`kimi-k2.7-code` 这类**只思考**的模型强制开启，对它们传 `disabled` 上游会直接报错——这是模型限制，网关不做特殊判断。
+- **Gemini 统一用 `thinkingLevel`**：发枚举 `minimal/low/medium/high`（`xhigh`/`max` 收敛到 `high`，关闭取最低档 `minimal`），不发 `thinkingBudget`。`thinkingBudget` 是 2.5 时代的旧参数，官方在 Gemini 3 上已转向 `thinkingLevel`，故网关不再下发 budget、也不按模型版本分流。
+- **火山默认发 `reasoning_effort`**：当前 Seed 2.0 系列用 `reasoning_effort`（`minimal/low/medium/high`，`minimal` 即不思考；`xhigh`/`max` → `high`，`none`/`disabled` → `minimal`），网关默认走这条。旧 Seed 1.6 用 `thinking` 开关（`enabled`/`disabled`/`auto`）—— 如果客户端**自己传了 `thinking` 块**，网关尊重它（含 `auto`）并删掉 `reasoning_effort`；二者不同时下发。
 - **思考内容不混入答案**：Anthropic 的 thinking 块、Gemini 的 thought parts 在归一化时被过滤，`choices[].message.content` 只含最终答案。
 - **可写死在部署上**：把 `reasoning_effort` 放进 Deployment 的 `pinned_params`（强制）或 `default_params`（客户端没传才补），就能做出 `claude-think-high` / `claude-fast` 这种「等级即别名」的模型，客户端连字段都不用传。识别厂商用的是该部署凭证的 base_url，所以同一别名下挂不同厂商的部署也能各自正确翻译。
+
+### 2.8 多模态图片（vision）
+
+客户端统一用 OpenAI 的 `image_url` 内容块传图，网关负责把它翻译成各家上游能吃的格式：
+
+```python
+client.chat.completions.create(
+    model="vision-balanced",
+    messages=[{"role": "user", "content": [
+        {"type": "text", "text": "这是什么？"},
+        {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}},
+        # 也支持 base64：{"url": "data:image/png;base64,...."}
+    ]}],
+)
+```
+
+各家对图片 URL 的支持不同，网关的处理见下表（`图片落库` 取决于 `GW_LOG_UPSTREAM_IO`）：
+
+| provider | 远程 `http(s)` URL | base64 data URI | 网关做了什么 |
+|---|---|---|---|
+| **OpenAI / 通义·百炼 / 火山·豆包** | ✅ | ✅ | 原样透传 |
+| **Anthropic（Claude）** | ✅ | ✅ | 翻译成 `image` 块（`url` / `base64` source）；system 仍按纯文本处理 |
+| **Gemini** | ❌ | ✅ | **先下载远程图转 base64**，再翻译成 `inlineData`（`mimeType` + `data`） |
+| **Kimi / Moonshot** | ❌ | ✅ | **先下载远程图转 base64** 再透传（Kimi 不会去拉远程 URL） |
+
+- 需要网关下载图片的厂商（Kimi、Gemini），由网关侧发起 HTTP 拉取，因此**那个图片 URL 必须是网关能访问到的**，并会增加一次下载延迟。
+- 下载有大小上限与超时：`GW_IMAGE_FETCH_MAX_BYTES`（默认 10 MiB）、`GW_IMAGE_FETCH_TIMEOUT`（默认 20s）。超限或拉取失败 → 该次尝试按失败处理（会走降级链；全部失败返回 `400`）。
+- 同一请求内重复引用同一图片 URL 只下载一次（请求内缓存）；降级到能直接吃 URL 的厂商（如 OpenAI）则不会触发下载。
+- 想完全关掉这个改写、永远原样透传 URL：`GW_IMAGE_FETCH_ENABLED=false`。
+
+> 这套逻辑只作用于 `/v1/chat/completions`（经适配器的路径）。`/v1/responses` 等透传端点仅对 `openai_compat`/`openai` 上游生效，图片按上游自身规则处理。
 
 ---
 
