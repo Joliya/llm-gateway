@@ -45,6 +45,10 @@ virtual keys with budgets, usage/cost logging, circuit breaking, and caching.
 - **Storage**: SQLite + in-memory out of the box; switch to Postgres + Redis via
   env vars for multi-instance deployments.
 
+## Console
+
+![llm-gateway console](docs/images/console.png)
+
 ## Quick start (local)
 
 ```bash
@@ -115,6 +119,13 @@ curl localhost:8000/v1/chat/completions \
 - `docker compose up` bundles Postgres + Redis and runs `alembic upgrade head`
   automatically via the image entrypoint before starting the server.
 
+Prebuilt multi-arch images (`linux/amd64`, `linux/arm64`) are published to GitHub
+Container Registry by CI — `latest` from `main`, and a version tag per release:
+
+```bash
+docker pull ghcr.io/joliya/llm-gateway:latest      # or :v0.1.0
+```
+
 ### Schema migrations
 
 The schema is versioned with Alembic (`alembic/versions/`). The initial
@@ -164,6 +175,13 @@ adapters), and `app/api/` (`v1/` proxy + `admin/` management).
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a deeper tour and
 [`CONTRIBUTING.md`](CONTRIBUTING.md) to get set up for development.
+
+## Security
+
+This gateway holds your upstream provider keys and issues virtual keys to
+callers — deploy it behind TLS, keep `/admin/*` off the public internet, and
+protect `GW_MASTER_KEY` / `GW_ENCRYPTION_KEY`. To report a vulnerability or read
+the operator hardening notes, see [`SECURITY.md`](SECURITY.md).
 
 ## License
 
