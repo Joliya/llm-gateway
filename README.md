@@ -123,7 +123,7 @@ Prebuilt multi-arch images (`linux/amd64`, `linux/arm64`) are published to GitHu
 Container Registry by CI — `latest` from `main`, and a version tag per release:
 
 ```bash
-docker pull ghcr.io/joliya/llm-gateway:latest      # or :v0.1.0
+docker pull ghcr.io/joliya/llm-gateway:latest      # or a release tag, e.g. :0.1.0
 ```
 
 ### Schema migrations
