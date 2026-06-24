@@ -188,6 +188,20 @@ class User(Base):
     last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class Setting(Base):
+    """Console-wide settings, stored as a key → JSON-value map so new settings
+    can be added without a schema change. Currently holds `currency` (USD→other
+    exchange rates + the display currency); future settings get their own keys."""
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class AdminAuditLog(Base):
     """One row per mutating /admin call (POST/PATCH/PUT/DELETE), for accountability."""
 
@@ -212,4 +226,5 @@ __all__ = [
     "RequestLog",
     "AdminAuditLog",
     "User",
+    "Setting",
 ]

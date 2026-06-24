@@ -40,6 +40,42 @@ async def test_chat_pinned_param_and_response(app_client):
 
 
 @respx.mock
+async def test_logs_filters(app_client):
+    import datetime as dt
+
+    respx.post("https://up.test/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=_openai_response())
+    )
+    r = await app_client.post("/v1/chat/completions", json={
+        "model": "balanced",
+        "messages": [{"role": "user", "content": "hello"}],
+    })
+    assert r.status_code == 200, r.text
+
+    async def q(**params):
+        resp = await app_client.get("/admin/logs", params=params, headers=MASTER_HEADERS)
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    # fuzzy model matches requested_model / alias ("balanced"); no match → empty
+    assert len(await q(model="bala")) == 1
+    assert await q(model="nomatch") == []
+    # LIKE wildcards in the term are matched literally, not as patterns
+    assert await q(model="bal%") == []
+    # provider is an exact match on provider_name ("mockoai")
+    assert len(await q(provider="mockoai")) == 1
+    assert await q(provider="mock") == []          # not a substring match
+    assert await q(provider="zzz") == []
+    # time range
+    past = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat()
+    future = (dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)).isoformat()
+    assert len(await q(start=past)) == 1
+    assert await q(start=future) == []
+    assert len(await q(end=future)) == 1
+    assert await q(end=past) == []
+
+
+@respx.mock
 async def test_log_captures_upstream_io(app_client):
     respx.post("https://up.test/v1/chat/completions").mock(
         return_value=httpx.Response(200, json=_openai_response())
@@ -716,3 +752,126 @@ async def test_audio_speech_binary(app_client):
     assert r.status_code == 200, r.text
     assert r.content == audio_bytes
     assert r.headers["content-type"] == "audio/mpeg"
+
+
+# --- Settings: currency / exchange rates ---
+async def test_settings_defaults_returned(app_client):
+    from app.core import fx
+
+    r = await app_client.get("/admin/settings", headers=MASTER_HEADERS)
+    assert r.status_code == 200, r.text
+    cur = r.json()["currency"]
+    # fresh install ships with a seeded common-currency set, base/display = USD
+    assert cur["display"] == "USD"
+    assert "CNY" in cur["rates"] and cur["rates"]
+    assert cur == fx.DEFAULT_CURRENCY
+
+
+async def test_settings_currency_roundtrip_and_normalization(app_client):
+    # lower-case codes are upper-cased; display must be a known currency.
+    r = await app_client.put("/admin/settings/currency", headers=MASTER_HEADERS,
+                             json={"rates": {"cny": 7.15, "eur": 0.92}, "display": "cny"})
+    assert r.status_code == 200, r.text
+    assert r.json()["currency"] == {"rates": {"CNY": 7.15, "EUR": 0.92}, "display": "CNY"}
+    # persisted
+    got = (await app_client.get("/admin/settings", headers=MASTER_HEADERS)).json()
+    assert got["currency"]["display"] == "CNY"
+
+
+async def test_settings_currency_rejects_bad_input(app_client):
+    bad_display = await app_client.put("/admin/settings/currency", headers=MASTER_HEADERS,
+                                       json={"rates": {"CNY": 7.15}, "display": "JPY"})
+    assert bad_display.status_code == 400
+    bad_rate = await app_client.put("/admin/settings/currency", headers=MASTER_HEADERS,
+                                    json={"rates": {"CNY": -1}, "display": "USD"})
+    assert bad_rate.status_code == 400
+
+
+async def test_settings_unknown_key_404(app_client):
+    r = await app_client.put("/admin/settings/nope", headers=MASTER_HEADERS, json={"x": 1})
+    assert r.status_code == 404
+
+
+# --- FX: daily exchange-rate auto-update ---
+@respx.mock
+async def test_currency_refresh_uses_primary_source(app_client):
+    await app_client.put("/admin/settings/currency", headers=MASTER_HEADERS,
+                         json={"rates": {"CNY": 1.0, "EUR": 1.0}, "display": "CNY"})
+    respx.get("https://open.er-api.com/v6/latest/USD").mock(
+        return_value=httpx.Response(200, json={"result": "success",
+                                               "rates": {"CNY": 7.2, "EUR": 0.93, "JPY": 150}}))
+    r = await app_client.post("/admin/settings/currency/refresh", headers=MASTER_HEADERS)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["updated"] is True
+    # only configured currencies are updated; new ones (JPY) are NOT added
+    assert body["currency"]["rates"] == {"CNY": 7.2, "EUR": 0.93}
+    assert body["currency"]["display"] == "CNY"
+
+
+@respx.mock
+async def test_currency_refresh_falls_back_when_primary_down(app_client):
+    await app_client.put("/admin/settings/currency", headers=MASTER_HEADERS,
+                         json={"rates": {"CNY": 1.0}, "display": "USD"})
+    respx.get("https://open.er-api.com/v6/latest/USD").mock(return_value=httpx.Response(500))
+    respx.get("https://api.frankfurter.app/latest?base=USD").mock(
+        return_value=httpx.Response(200, json={"base": "USD", "rates": {"CNY": 7.05}}))
+    r = await app_client.post("/admin/settings/currency/refresh", headers=MASTER_HEADERS)
+    assert r.status_code == 200, r.text
+    assert r.json()["currency"]["rates"]["CNY"] == 7.05
+
+
+@respx.mock
+async def test_currency_refresh_seeds_defaults_on_fresh_install(app_client):
+    # No `currency` row yet → refresh seeds the common-currency defaults with
+    # live rates from the source.
+    respx.get("https://open.er-api.com/v6/latest/USD").mock(
+        return_value=httpx.Response(200, json={"result": "success",
+                                               "rates": {"CNY": 7.11, "EUR": 0.9, "GBP": 0.78,
+                                                         "JPY": 149, "HKD": 7.79, "KRW": 1340,
+                                                         "SGD": 1.34, "AUD": 1.5, "CAD": 1.37}}))
+    r = await app_client.post("/admin/settings/currency/refresh", headers=MASTER_HEADERS)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["updated"] is True
+    assert body["currency"]["rates"]["CNY"] == 7.11
+    assert body["currency"]["display"] == "USD"
+
+
+@respx.mock
+async def test_currency_reset_defaults_seeds_common_set(app_client):
+    from app.core import fx
+
+    # an existing install with an empty (operator-cleared) currency row
+    await app_client.put("/admin/settings/currency", headers=MASTER_HEADERS,
+                         json={"rates": {}, "display": "USD"})
+    respx.get("https://open.er-api.com/v6/latest/USD").mock(
+        return_value=httpx.Response(200, json={"result": "success", "rates": {"CNY": 7.05}}))
+    r = await app_client.post("/admin/settings/currency/reset-defaults", headers=MASTER_HEADERS)
+    assert r.status_code == 200, r.text
+    rates = r.json()["currency"]["rates"]
+    # every common currency is present; reachable ones get the live rate
+    assert set(rates) == set(fx.DEFAULT_RATES)
+    assert rates["CNY"] == 7.05
+
+
+@respx.mock
+async def test_currency_reset_defaults_offline_keeps_placeholders(app_client):
+    from app.core import fx
+
+    # every source down → live fetch fails; placeholder defaults must still stand
+    for _, url, _ in fx.SOURCES:
+        respx.get(url).mock(return_value=httpx.Response(500))
+    r = await app_client.post("/admin/settings/currency/reset-defaults", headers=MASTER_HEADERS)
+    assert r.status_code == 200, r.text
+    assert r.json()["currency"]["rates"] == fx.DEFAULT_RATES
+
+
+@respx.mock
+async def test_currency_refresh_noop_when_cleared(app_client):
+    # Operator explicitly cleared all currencies → respected, no re-seed.
+    await app_client.put("/admin/settings/currency", headers=MASTER_HEADERS,
+                         json={"rates": {}, "display": "USD"})
+    r = await app_client.post("/admin/settings/currency/refresh", headers=MASTER_HEADERS)
+    assert r.status_code == 200, r.text
+    assert r.json()["updated"] is False

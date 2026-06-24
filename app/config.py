@@ -108,6 +108,15 @@ class Settings(BaseSettings):
     # 0 disables the sweeper (on-access reset_if_needed still runs).
     budget_sweep_interval: float = 300.0
 
+    # --- Exchange rates (currency display) ---
+    # Periodically refresh USD→other rates for the currencies configured in the
+    # `currency` console setting, from a free public API (exchangerate-api first,
+    # then fallbacks). Only refreshes currencies already configured; never adds
+    # new ones. 0 disables auto-update (rates stay whatever was set manually).
+    fx_auto_update: bool = True
+    fx_update_interval: float = 86400.0     # seconds between refreshes (24h)
+    fx_fetch_timeout: float = 15.0          # per-source HTTP timeout (seconds)
+
 
 @lru_cache
 def get_settings() -> Settings:

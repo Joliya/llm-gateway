@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_admin
@@ -13,11 +13,22 @@ from app.db.session import get_session
 router = APIRouter(dependencies=[Depends(require_admin)])
 
 
+def _like(term: str) -> str:
+    """Escape LIKE wildcards in a user term so it matches literally, then wrap
+    it for a contains-match. Paired with `escape="\\"` on the column op."""
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 @router.get("/logs")
 async def list_logs(
     session: AsyncSession = Depends(get_session),
     virtual_key_id: int | None = None,
     alias: str | None = None,
+    model: str | None = Query(None, description="Fuzzy match on requested model or alias"),
+    provider: str | None = Query(None, description="Exact match on provider name"),
+    start: dt.datetime | None = Query(None, description="Only requests at/after this time"),
+    end: dt.datetime | None = Query(None, description="Only requests at/before this time"),
     limit: int = Query(100, le=1000),
     offset: int = 0,
 ):
@@ -26,6 +37,24 @@ async def list_logs(
         stmt = stmt.where(RequestLog.virtual_key_id == virtual_key_id)
     if alias is not None:
         stmt = stmt.where(RequestLog.alias == alias)
+    if model:
+        pat = _like(model.strip())
+        stmt = stmt.where(or_(
+            RequestLog.requested_model.ilike(pat, escape="\\"),
+            RequestLog.alias.ilike(pat, escape="\\"),
+        ))
+    if provider:
+        # Exact match — the console populates this from the known provider list,
+        # so it can use an index instead of a substring scan.
+        stmt = stmt.where(RequestLog.provider_name == provider)
+    if start is not None:
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=dt.UTC)
+        stmt = stmt.where(RequestLog.ts >= start)
+    if end is not None:
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=dt.UTC)
+        stmt = stmt.where(RequestLog.ts <= end)
     rows = (await session.execute(stmt.limit(limit).offset(offset))).scalars().all()
     return [
         {

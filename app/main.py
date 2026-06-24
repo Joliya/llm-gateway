@@ -37,12 +37,16 @@ from app.api.admin import (
     providers as admin_providers,
 )
 from app.api.admin import (
+    settings as admin_settings,
+)
+from app.api.admin import (
     users as admin_users,
 )
 from app.api.v1 import audio, chat, completions, embeddings, images, models, responses
 from app.config import get_settings
 from app.core import budget as budget_mod
 from app.core import cache as cache_mod
+from app.core import fx as fx_mod
 from app.core import metrics as metrics_mod
 from app.core import rate_limiter as rl_mod
 from app.core.logging_service import request_logger
@@ -64,6 +68,25 @@ async def _budget_sweep_loop() -> None:
                 await budget_mod.sweep_expired(session)
         except Exception:
             _log.exception("budget sweep failed")
+
+
+async def _fx_update_loop(client: httpx.AsyncClient) -> None:
+    """Refresh configured currencies' USD rates daily from a free public API.
+    Runs a throttled refresh shortly after boot (skipped if rates are still
+    fresh, so restarts don't hammer the source), then on a fixed interval."""
+    interval = settings.fx_update_interval
+    try:
+        async with SessionLocal() as session:
+            await fx_mod.refresh_rates(session, client, settings.fx_fetch_timeout, throttle=interval)
+    except Exception:
+        _log.exception("fx rate update failed")
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            async with SessionLocal() as session:
+                await fx_mod.refresh_rates(session, client, settings.fx_fetch_timeout)
+        except Exception:
+            _log.exception("fx rate update failed")
 
 
 @asynccontextmanager
@@ -93,13 +116,19 @@ async def lifespan(app: FastAPI):
     if settings.budget_sweep_interval and settings.budget_sweep_interval > 0:
         sweep_task = asyncio.create_task(_budget_sweep_loop())
 
+    # Daily refresh of display-currency exchange rates.
+    fx_task: asyncio.Task | None = None
+    if settings.fx_auto_update and settings.fx_update_interval and settings.fx_update_interval > 0:
+        fx_task = asyncio.create_task(_fx_update_loop(app.state.http_client))
+
     try:
         yield
     finally:
-        if sweep_task is not None:
-            sweep_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await sweep_task
+        for task in (sweep_task, fx_task):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         await request_logger.stop()
         await app.state.http_client.aclose()
         if getattr(app.state, "redis", None) is not None:
@@ -175,6 +204,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_playground.router, prefix="/admin", tags=["admin:playground"])
     app.include_router(admin_users.login_router, prefix="/admin", tags=["admin:auth"])
     app.include_router(admin_users.router, prefix="/admin/users", tags=["admin:users"])
+    app.include_router(admin_settings.router, prefix="/admin/settings", tags=["admin:settings"])
 
     # Self-contained admin console (static, no build step). Served last so it
     # never shadows the API routes above.

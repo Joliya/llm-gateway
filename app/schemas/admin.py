@@ -196,6 +196,16 @@ class VirtualKeyCreated(VirtualKeyOut):
     key: str
 
 
+# --- Settings ---
+class CurrencySetting(BaseModel):
+    # Exchange rates expressed as "1 USD = rate <CODE>". USD is always the base
+    # and is implicitly 1.0 (never stored here).
+    rates: dict[str, float] = Field(default_factory=dict)
+    # Which currency amounts are displayed in. "USD" (default) means no
+    # conversion; otherwise must be a key present in `rates`.
+    display: str = "USD"
+
+
 # --- Console users ---
 class UserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=150)

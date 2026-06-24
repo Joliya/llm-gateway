@@ -10,6 +10,9 @@ let MASTER = sessionStorage.getItem(KEY_STORE) || "";
 let IS_MASTER = sessionStorage.getItem(ROLE_STORE) !== "false";
 let ROUTE = "overview";
 const ref = { providers: [], aliases: [], credentials: [], providerTypes: [] };
+// Console-wide settings (loaded once at sign-in, refreshed after a save). All
+// monetary amounts are stored in USD; `currency` decides how they're displayed.
+let SETTINGS = { currency: { rates: {}, display: "USD" } };
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, attrs = {}, ...kids) => {
@@ -56,6 +59,7 @@ const I18N = {
     "{x} created": "{x}已创建", "{x} updated": "{x}已更新", "{x} deleted": "{x}已删除",
     "No {x} yet. Create the first one.": "暂无{x}，先创建一个吧。",
     "Edit": "编辑", "Delete": "删除", "Apply": "应用",
+    "Search": "搜索", "Filter…": "筛选…", "No matches.": "没有匹配项。",
     'Delete {kind} "{label}"? This cannot be undone.': '确定删除{kind}"{label}"？此操作不可撤销。',
     "enabled": "已启用", "disabled": "已停用",
     "inherit": "继承", "on": "开", "off": "关",
@@ -145,6 +149,10 @@ const I18N = {
     "Every proxied request, newest first — tokens, cost, latency, retries, and cache hits. Click a row to inspect the exact request and response exchanged with the provider.":
       "所有代理请求（最新在前）—— Token、成本、延迟、重试与缓存命中。点击某一行可查看与供应商之间实际收发的请求与响应。",
     "filter by alias": "按别名过滤", "Limit": "条数", "No requests match.": "没有匹配的请求。",
+    "model or alias contains…": "模型或别名包含…",
+    "Model / alias": "模型 / 别名", "All providers": "全部供应商",
+    "Range": "时间范围", "Last hour": "最近 1 小时", "Custom range": "自定义区间", "All time": "全部时间",
+    "From": "起始时间", "To": "结束时间", "Apply": "应用", "Reset": "重置",
     "Time": "时间", "Status": "状态", "Alias / model": "别名 / 模型", "Provider": "供应商",
     "Latency": "延迟", "Retries": "重试", "hit": "命中",
     "Inspect upstream request / response": "查看上游请求 / 响应",
@@ -166,6 +174,25 @@ const I18N = {
     "response": "响应", "synthetic": "动态合成",
     "alias": "别名", "deployment": "部署", "provider": "供应商", "model": "模型",
     "tokens": "tokens", "cost": "成本", "latency": "延迟", "retries": "重试",
+    // settings
+    "Settings": "设置", "configuration": "配置",
+    "Console-wide preferences. More settings will land here over time.": "控制台全局偏好设置。后续会有更多设置项加入这里。",
+    "Currency": "币种", "Currency rates": "币种汇率", "Base currency": "基准币种",
+    "Display currency": "展示币种",
+    "Amounts are tracked in USD. Define exchange rates (1 USD = rate × currency), then choose which currency the console displays.":
+      "金额以美元（USD）记账。设置汇率（1 美元 = 汇率 × 该币种），再选择控制台展示用的币种。",
+    "USD shows the raw amount; another currency converts every amount using its rate.":
+      "选择 USD 展示原始金额；选择其他币种则按其汇率换算所有金额。",
+    "Rate per 1 USD": "每 1 美元汇率", "No currencies yet — add one below.": "暂无币种 —— 在下方添加一个。",
+    "+ Add currency": "+ 添加币种", "Settings saved": "设置已保存",
+    "USD is the base currency — it's always 1.": "USD 是基准币种，汇率恒为 1。",
+    "Rates must be positive numbers.": "汇率必须是正数。",
+    "Rates auto-refresh once a day from a free public API (exchangerate-api, with fallbacks). Only the currencies listed here are updated.":
+      "汇率每天通过免费公共接口（优先 exchangerate-api，失败则降级到其他源）自动更新一次，仅更新此处列出的币种。",
+    "Refresh rates now": "立即刷新汇率", "Rates updated.": "汇率已更新。",
+    "No rates changed (sources unavailable or nothing to update).": "汇率未变更（数据源不可用，或没有可更新的币种）。",
+    "Restore common currencies": "恢复常见币种", "Common currencies restored.": "已恢复常见币种。",
+    "Replace the current list with the common-currency defaults?": "用常见币种默认集替换当前列表吗？",
   },
 };
 
@@ -227,6 +254,46 @@ function toast(msg, isErr = false) {
   toastTimer = setTimeout(() => (node.hidden = true), 3200);
 }
 
+// ------------------------------------------------------------------ currency
+// Symbols for common currencies; anything else falls back to "<CODE> ".
+const CURRENCY_SYMBOLS = {
+  USD: "$", CNY: "¥", EUR: "€", GBP: "£", JPY: "¥", HKD: "HK$", TWD: "NT$",
+  KRW: "₩", INR: "₹", RUB: "₽", BRL: "R$", AUD: "A$", CAD: "C$", SGD: "S$",
+  CHF: "CHF ", THB: "฿", VND: "₫", IDR: "Rp", TRY: "₺",
+};
+const MONEY_DP = 5; // decimals shown for amounts; hover reveals the full value.
+
+function currencyState() {
+  const c = (SETTINGS && SETTINGS.currency) || {};
+  const rates = c.rates || {};
+  const display = c.display || "USD";
+  const rate = display === "USD" ? 1 : Number(rates[display]) || 1;
+  return { display, rate };
+}
+function currencySymbol(code) { return CURRENCY_SYMBOLS[code] || code + " "; }
+function toDisplay(usd) { return Number(usd || 0) * currencyState().rate; }
+// Truncated-for-display string, e.g. "¥0.71500".
+function moneyStr(usd) {
+  const { display } = currencyState();
+  return currencySymbol(display) + toDisplay(usd).toFixed(MONEY_DP);
+}
+// Full-precision tooltip; also surfaces the canonical USD figure when converted.
+function moneyTitle(usd) {
+  const { display } = currencyState();
+  const full = currencySymbol(display) + String(toDisplay(usd));
+  return display === "USD" ? full : full + "  (= $" + String(Number(usd || 0)) + " USD)";
+}
+// A span carrying the rounded amount + full-value tooltip. `cls` styles it.
+function moneyEl(usd, cls) {
+  return el("span", { class: cls || "", title: moneyTitle(usd) }, moneyStr(usd));
+}
+// Raw USD unit-price cell (e.g. $/1M tokens): 5 decimals shown, full value on
+// hover. Not currency-converted — these are configured/edited in USD.
+function priceEl(usd) {
+  const n = Number(usd || 0);
+  return el("span", { class: "cell-muted", title: "$" + String(n) }, "$" + n.toFixed(MONEY_DP));
+}
+
 // ------------------------------------------------------------------ formatters
 const fmt = {
   pill(enabled) {
@@ -245,7 +312,7 @@ const fmt = {
     return String(v);
   },
   money(v) {
-    return el("span", { class: "cell-amber" }, "$" + Number(v || 0).toFixed(4));
+    return moneyEl(v, "cell-amber");
   },
   providerName(id) {
     const p = ref.providers.find((x) => x.id === id);
@@ -350,8 +417,8 @@ const SCHEMAS = {
       { key: "upstream_model", label: "Upstream model", cls: "cell-amber" },
       { key: "dialect", label: "Dialect", fmt: (v) => v || "auto", cls: "cell-muted" },
       { key: "weight", label: "Weight" },
-      { key: "input_price", label: "In $/M", fmt: (v) => String(v) },
-      { key: "output_price", label: "Out $/M", fmt: (v) => String(v) },
+      { key: "input_price", label: "In $/M", fmt: (v) => priceEl(v) },
+      { key: "output_price", label: "Out $/M", fmt: (v) => priceEl(v) },
       { key: "enabled", label: "State", fmt: (v) => fmt.pill(v) },
     ],
     fields: [
@@ -408,10 +475,14 @@ const SCHEMAS = {
 };
 
 function budgetCell(r) {
-  const spend = "$" + Number(r.spend || 0).toFixed(2);
-  if (r.max_budget == null) return el("span", {}, el("span", { class: "cell-amber" }, spend), el("span", { class: "cell-muted" }, " / ∞ " + r.budget_period));
+  if (r.max_budget == null) {
+    return el("span", {}, moneyEl(r.spend, "cell-amber"), el("span", { class: "cell-muted" }, " / ∞ " + r.budget_period));
+  }
   const over = r.spend >= r.max_budget;
-  return el("span", {}, el("span", { class: over ? "" : "cell-amber", style: over ? "color:var(--err)" : "" }, spend), el("span", { class: "cell-muted" }, " / $" + r.max_budget + " " + r.budget_period));
+  const spendEl = moneyEl(r.spend, over ? "" : "cell-amber");
+  if (over) spendEl.style.color = "var(--err)";
+  return el("span", {}, spendEl,
+    el("span", { class: "cell-muted", title: moneyTitle(r.max_budget) }, " / " + moneyStr(r.max_budget) + " " + r.budget_period));
 }
 
 // ------------------------------------------------------------------ reference data
@@ -426,6 +497,16 @@ async function loadRef() {
   ref.aliases = aliases || [];
   ref.credentials = credentials || [];
   ref.providerTypes = (ptypes && ptypes.provider_types) || [];
+}
+
+// Load console-wide settings into the global SETTINGS (drives money display).
+// Best-effort: a failure leaves the USD default in place rather than breaking
+// every view that renders an amount.
+async function loadSettings() {
+  try {
+    const s = await api("GET", "/admin/settings");
+    if (s && s.currency) SETTINGS = s;
+  } catch { /* keep defaults */ }
 }
 
 // ------------------------------------------------------------------ views
@@ -445,6 +526,7 @@ async function renderView(route) {
       return await renderUsers(content, crumb);
     }
     if (route === "playground") return await renderPlayground(content, crumb);
+    if (route === "settings") return await renderSettings(content, crumb);
     return await renderCrud(route, content, crumb);
   } catch (e) {
     content.append(el("div", { class: "empty" }, e.message));
@@ -478,21 +560,50 @@ async function renderCrud(route, content, crumb) {
     el("th", {}, ""),
   ));
   const tbody = el("tbody", {});
+  const index = [];   // { tr, hay } for client-side filtering of loaded rows
   for (const r of rows) {
     const tds = schema.columns.map((c) => {
       const raw = r[c.key];
       const cell = c.fmt ? c.fmt(raw, r) : (raw == null || raw === "" ? el("span", { class: "cell-muted" }, "—") : String(raw));
       return el("td", { class: c.cls || "" }, cell);
     });
+    // Searchable text = the displayed column values (before the action buttons).
+    const hay = tds.map((td) => td.textContent).join(" ").toLowerCase();
     tds.push(el("td", { class: "col-actions" },
       el("div", { class: "row-actions" },
         el("button", { class: "btn btn-sm btn-ghost", onclick: () => openModal(route, r) }, t("Edit")),
         el("button", { class: "btn btn-sm btn-danger", onclick: () => removeRow(route, r) }, t("Delete")),
       )
     ));
-    tbody.append(el("tr", {}, ...tds));
+    const tr = el("tr", {}, ...tds);
+    tbody.append(tr);
+    index.push({ tr, hay });
   }
-  content.append(el("div", { class: "panel" }, el("div", { class: "table-wrap" }, el("table", {}, thead, tbody))));
+
+  const noMatch = el("div", { class: "empty", style: "display:none" }, t("No matches."));
+  const search = listSearch(index, noMatch);
+  content.append(el("div", { class: "filters" }, search));
+  content.append(el("div", { class: "panel" },
+    el("div", { class: "table-wrap" }, el("table", {}, thead, tbody)), noMatch));
+}
+
+// A reusable client-side search box for an already-loaded list. `index` is an
+// array of { tr, hay } (hay = lowercased searchable text); rows that don't
+// contain the query are hidden, and `noMatch` is shown when none remain.
+function listSearch(index, noMatch) {
+  const input = el("input", { type: "text", placeholder: t("Filter…") });
+  function apply() {
+    const q = input.value.trim().toLowerCase();
+    let shown = 0;
+    for (const { tr, hay } of index) {
+      const hit = !q || hay.includes(q);
+      tr.hidden = !hit;
+      if (hit) shown++;
+    }
+    if (noMatch) noMatch.style.display = shown ? "none" : "";
+  }
+  input.addEventListener("input", apply);
+  return el("label", { class: "field list-search" }, el("span", { class: "field-label" }, t("Search")), input);
 }
 
 async function removeRow(route, row) {
@@ -533,7 +644,7 @@ async function renderOverview(content, crumb) {
 
   const stat = (label, value, unit) => el("div", { class: "stat" },
     el("div", { class: "stat-label" }, label),
-    el("div", { class: "stat-value" }, String(value), unit ? el("span", { class: "unit" }, unit) : null),
+    el("div", { class: "stat-value" }, value && value.nodeType ? value : String(value), unit ? el("span", { class: "unit" }, unit) : null),
   );
 
   content.append(el("div", { class: "stat-grid" },
@@ -543,7 +654,7 @@ async function renderOverview(content, crumb) {
     stat(t("Virtual keys"), (keys || []).length),
     stat(t("Requests · 24h"), totReq.toLocaleString()),
     stat(t("Tokens · 24h"), totTok.toLocaleString()),
-    stat(t("Spend · 24h"), "$" + totCost.toFixed(2)),
+    stat(t("Spend · 24h"), moneyEl(totCost)),
   ));
 
   // usage by alias
@@ -664,15 +775,15 @@ async function renderAnalytics(content, crumb) {
     const totCost = usage.reduce((a, u) => a + u.cost, 0);
     const stat = (label, value) => el("div", { class: "stat" },
       el("div", { class: "stat-label" }, label),
-      el("div", { class: "stat-value" }, String(value)));
+      el("div", { class: "stat-value" }, value && value.nodeType ? value : String(value)));
     host.append(el("div", { class: "stat-grid" },
       stat(t("Requests"), totReq.toLocaleString()),
       stat(t("Tokens"), totTok.toLocaleString()),
-      stat(t("Spend"), "$" + totCost.toFixed(2)),
+      stat(t("Spend"), moneyEl(totCost)),
     ));
 
     const costRows = usage.map((u) => ({ label: u.alias || "—", value: u.cost })).sort((a, b) => b.value - a.value);
-    barPanel(t("spend by alias"), costRows, (v) => "$" + v.toFixed(4));
+    barPanel(t("spend by alias"), costRows, (v) => moneyEl(v));
 
     const reqRows = usage.map((u) => ({ label: u.alias || "—", value: u.requests })).sort((a, b) => b.value - a.value);
     barPanel(t("requests by alias"), reqRows, (v) => v.toLocaleString(), "margin-top:24px");
@@ -680,7 +791,7 @@ async function renderAnalytics(content, crumb) {
     const keyRows = byKey
       .map((u) => ({ label: keyName(u.virtual_key_id), value: u.cost, req: u.requests }))
       .sort((a, b) => b.value - a.value);
-    barPanel(t("spend by key"), keyRows, (v, r) => "$" + v.toFixed(4) + " · " + r.req, "margin-top:24px");
+    barPanel(t("spend by key"), keyRows, (v, r) => el("span", { title: moneyTitle(v) }, moneyStr(v) + " · " + r.req), "margin-top:24px");
 
     // recent admin activity (audit trail)
     host.append(el("div", { class: "eyebrow section-label", style: "margin-top:24px" }, t("recent admin activity")));
@@ -732,8 +843,9 @@ async function renderUsers(content, crumb) {
   }
 
   const tb = el("tbody", {});
+  const index = [];
   for (const u of users) {
-    tb.append(el("tr", {},
+    const tr = el("tr", {},
       el("td", { class: "cell-muted" }, "#" + u.id),
       el("td", { class: "cell-strong" }, u.username),
       el("td", {}, fmt.pill(u.enabled)),
@@ -744,13 +856,17 @@ async function renderUsers(content, crumb) {
         el("button", { class: "btn btn-sm btn-ghost", onclick: () => toggleUser(u) }, t(u.enabled ? "Disable" : "Enable")),
         el("button", { class: "btn btn-sm btn-danger", onclick: () => deleteUser(u) }, t("Delete")),
       )),
-    ));
+    );
+    tb.append(tr);
+    index.push({ tr, hay: ("#" + u.id + " " + u.username).toLowerCase() });
   }
+  const noMatch = el("div", { class: "empty", style: "display:none" }, t("No matches."));
+  content.append(el("div", { class: "filters" }, listSearch(index, noMatch)));
   content.append(el("div", { class: "panel" }, el("div", { class: "table-wrap" }, el("table", {},
     el("thead", {}, el("tr", {},
       el("th", {}, t("ID")), el("th", {}, t("Username")), el("th", {}, t("State")),
       el("th", {}, t("Created")), el("th", {}, t("Last login")), el("th", {}, ""))),
-    tb))));
+    tb)), noMatch));
 }
 
 async function resetUserPassword(u) {
@@ -790,15 +906,55 @@ async function renderLogs(content, crumb) {
     ))
   );
 
-  const aliasInput = el("input", { type: "text", placeholder: t("filter by alias"), id: "f-alias" });
+  const modelInput = el("input", { type: "text", placeholder: t("model or alias contains…"), id: "f-model" });
+  const providerSelect = el("select", { id: "f-provider" }, el("option", { value: "" }, t("All providers")));
+  const rangeSelect = el("select", { id: "f-range" },
+    el("option", { value: "1h" }, t("Last hour")),
+    el("option", { value: "24h" }, t("Last 24 hours")),
+    el("option", { value: "7d" }, t("Last 7 days")),
+    el("option", { value: "30d" }, t("Last 30 days")),
+    el("option", { value: "custom" }, t("Custom range")),
+    el("option", { value: "all" }, t("All time")),
+  );
+  rangeSelect.value = "24h";   // default window keeps the query bounded by the ts index
+  const RANGE_MS = { "1h": 3600e3, "24h": 86400e3, "7d": 604800e3, "30d": 2592000e3 };
+  const startInput = el("input", { type: "datetime-local", id: "f-start" });
+  const endInput = el("input", { type: "datetime-local", id: "f-end" });
+  const customWrap = el("div", { class: "filters-custom" },
+    el("label", { class: "field" }, el("span", { class: "field-label" }, t("From")), startInput),
+    el("label", { class: "field" }, el("span", { class: "field-label" }, t("To")), endInput),
+  );
   const limitInput = el("input", { type: "number", value: "100", id: "f-limit" });
   const tableHost = el("div", { class: "panel" });
+
+  // From/To only matter for a custom range.
+  function syncCustom() { customWrap.style.display = rangeSelect.value === "custom" ? "" : "none"; }
+  rangeSelect.addEventListener("change", () => { syncCustom(); reload(); });
+  syncCustom();
+  // Enter in any text/time field applies the filters.
+  for (const inp of [modelInput, startInput, endInput, limitInput]) {
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") reload(); });
+  }
+  // Populate the provider dropdown from the known provider list (best-effort).
+  try {
+    const provs = await api("GET", "/admin/providers");
+    for (const p of provs || []) providerSelect.append(el("option", { value: p.name }, p.name));
+  } catch (_e) { /* leave just "All providers" */ }
 
   async function reload() {
     tableHost.innerHTML = "";
     const params = new URLSearchParams();
-    const a = aliasInput.value.trim();
-    if (a) params.set("alias", a);
+    const m = modelInput.value.trim();
+    if (m) params.set("model", m);
+    if (providerSelect.value) params.set("provider", providerSelect.value);
+    // datetime-local is wall-clock with no zone; toISOString sends UTC.
+    const range = rangeSelect.value;
+    if (range === "custom") {
+      if (startInput.value) params.set("start", new Date(startInput.value).toISOString());
+      if (endInput.value) params.set("end", new Date(endInput.value).toISOString());
+    } else if (range !== "all") {
+      params.set("start", new Date(Date.now() - RANGE_MS[range]).toISOString());
+    }
     params.set("limit", limitInput.value || "100");
     let rows;
     try { rows = await api("GET", "/admin/logs?" + params.toString()); }
@@ -830,10 +986,25 @@ async function renderLogs(content, crumb) {
       tb)));
   }
 
+  function resetFilters() {
+    modelInput.value = "";
+    providerSelect.value = "";
+    rangeSelect.value = "24h";
+    startInput.value = "";
+    endInput.value = "";
+    limitInput.value = "100";
+    syncCustom();
+    reload();
+  }
+
   content.append(el("div", { class: "filters" },
-    el("label", { class: "field" }, el("span", { class: "field-label" }, t("Alias")), aliasInput),
+    el("label", { class: "field" }, el("span", { class: "field-label" }, t("Model / alias")), modelInput),
+    el("label", { class: "field" }, el("span", { class: "field-label" }, t("Provider")), providerSelect),
+    el("label", { class: "field" }, el("span", { class: "field-label" }, t("Range")), rangeSelect),
+    customWrap,
     el("label", { class: "field" }, el("span", { class: "field-label" }, t("Limit")), limitInput),
     el("button", { class: "btn", onclick: reload }, t("Apply")),
+    el("button", { class: "btn btn-ghost", onclick: resetFilters }, t("Reset")),
   ));
   content.append(tableHost);
   await reload();
@@ -869,7 +1040,10 @@ async function showLogDetail(id) {
   const meta = el("div", { class: "io-meta" },
     el("span", {}, routed + " · " + (r.alias || r.requested_model)),
     el("span", { class: "pill " + (r.status === 200 ? "on" : "err") }, String(r.status)),
-    el("span", { class: "cell-muted" }, (r.total_tokens || 0).toLocaleString() + " tok · $" + Number(r.cost || 0).toFixed(4) + " · " + (r.latency_ms || 0) + " ms"),
+    el("span", { class: "cell-muted" },
+      (r.total_tokens || 0).toLocaleString() + " tok · ",
+      moneyEl(r.cost),
+      " · " + (r.latency_ms || 0) + " ms"),
   );
   const sections = [
     el("div", { class: "io-sec" }, el("div", { class: "io-label" }, t("Sent to provider")),
@@ -940,14 +1114,14 @@ async function renderPlayground(content, crumb) {
       output.textContent = res.content || t("(empty response)");
       const m = res.meta;
       meta.innerHTML = "";
-      const chip = (label, val, amber) => el("span", { class: "pg-chip" + (amber ? " amber" : "") }, el("b", {}, t(label)), String(val));
+      const chip = (label, val, amber) => el("span", { class: "pg-chip" + (amber ? " amber" : "") }, el("b", {}, t(label)), val && val.nodeType ? val : String(val));
       meta.append(
         chip("alias", m.alias, true),
         chip("deployment", m.deployment_id == null ? t("synthetic") : "#" + m.deployment_id),
         chip("provider", m.provider_type),
         chip("model", m.upstream_model),
         chip("tokens", `${m.prompt_tokens}+${m.completion_tokens}=${m.total_tokens}`),
-        chip("cost", "$" + m.cost),
+        chip("cost", moneyEl(m.cost), true),
         chip("latency", m.latency_ms + " ms"),
         chip("retries", m.retries),
       );
@@ -982,6 +1156,172 @@ async function renderPlayground(content, crumb) {
   );
 
   content.append(el("div", { class: "pg-grid" }, form, responsePanel));
+}
+
+// ------------------------------------------------------------------ settings
+// Each entry is one section in the settings sub-nav. Adding a future setting =
+// append another { id, label, render } here; the sub-nav and layout scale on
+// their own. `render()` returns the section's content element.
+const SETTINGS_SECTIONS = [
+  { id: "currency", label: "Currency rates", render: currencyCard },
+];
+
+let SETTINGS_SECTION = SETTINGS_SECTIONS[0].id; // remembered across re-renders
+
+async function renderSettings(content, crumb) {
+  crumb.textContent = t("Settings");
+  await loadSettings();
+
+  content.append(
+    el("div", { class: "view-head" }, el("div", {},
+      el("div", { class: "eyebrow" }, t("configuration")),
+      el("h1", { class: "view-title" }, t("Settings")),
+      el("p", { class: "view-desc" }, t("Console-wide preferences. More settings will land here over time.")),
+    ))
+  );
+
+  const subnav = el("nav", { class: "settings-subnav" });
+  const sectionHost = el("div", { class: "settings-section" });
+
+  function select(id) {
+    SETTINGS_SECTION = id;
+    subnav.querySelectorAll(".settings-subnav-item").forEach(
+      (n) => n.classList.toggle("active", n.dataset.section === id));
+    const sec = SETTINGS_SECTIONS.find((s) => s.id === id) || SETTINGS_SECTIONS[0];
+    sectionHost.innerHTML = "";
+    sectionHost.append(sec.render());
+  }
+
+  for (const s of SETTINGS_SECTIONS) {
+    subnav.append(el("a", { class: "settings-subnav-item", "data-section": s.id,
+      onclick: () => select(s.id) }, t(s.label)));
+  }
+
+  content.append(el("div", { class: "settings-layout" }, subnav, sectionHost));
+  select(SETTINGS_SECTIONS.some((s) => s.id === SETTINGS_SECTION) ? SETTINGS_SECTION : SETTINGS_SECTIONS[0].id);
+}
+
+// --- currency / exchange-rate setting ---
+function currencyCard() {
+  const cur = (SETTINGS && SETTINGS.currency) || { rates: {}, display: "USD" };
+  const state = {
+    rows: Object.entries(cur.rates || {}).map(([code, rate]) => ({ code, rate: String(rate) })),
+    display: cur.display || "USD",
+  };
+  const card = el("div", { class: "panel panel-pad settings-card" });
+
+  function draw() {
+    card.innerHTML = "";
+    card.append(
+      el("div", { class: "eyebrow section-label" }, t("Currency rates")),
+      el("p", { class: "view-desc" }, t("Amounts are tracked in USD. Define exchange rates (1 USD = rate × currency), then choose which currency the console displays.")),
+      el("div", { class: "settings-base" },
+        el("span", { class: "field-label" }, t("Base currency")),
+        el("span", { class: "settings-base-code" }, "USD"),
+        el("span", { class: "cell-muted" }, "= 1.00000"),
+      ),
+    );
+
+    // Display currency — USD plus every currency that has a rate.
+    const codes = [...new Set(["USD", ...state.rows.map((r) => r.code).filter(Boolean)])];
+    const dispSel = el("select", {}, ...codes.map((c) => el("option", { value: c }, c)));
+    dispSel.value = codes.includes(state.display) ? state.display : "USD";
+    dispSel.addEventListener("change", () => { state.display = dispSel.value; });
+    card.append(el("label", { class: "field" },
+      el("span", { class: "field-label" }, t("Display currency")),
+      dispSel,
+      el("span", { class: "field-hint" }, t("USD shows the raw amount; another currency converts every amount using its rate.")),
+    ));
+
+    // Rate rows.
+    if (state.rows.length) {
+      const tb = el("tbody", {});
+      state.rows.forEach((row) => {
+        const codeInp = el("input", { type: "text", value: row.code, placeholder: "CNY" });
+        codeInp.addEventListener("input", () => { row.code = codeInp.value.trim().toUpperCase(); });
+        // Plain text + decimal inputmode rather than type=number: the number
+        // spinner steps by whole units and some locales reject a "." separator,
+        // which makes decimal rates like 7.15 awkward. We validate on save.
+        const rateInp = el("input", { type: "text", inputmode: "decimal", value: row.rate, placeholder: "7.15000" });
+        rateInp.addEventListener("input", () => { row.rate = rateInp.value.trim(); });
+        const del = el("button", { class: "btn btn-sm btn-danger", type: "button",
+          onclick: () => { state.rows = state.rows.filter((r) => r !== row); draw(); } }, t("Delete"));
+        tb.append(el("tr", {}, el("td", {}, codeInp), el("td", {}, rateInp), el("td", { class: "col-actions" }, del)));
+      });
+      card.append(el("div", { class: "table-wrap settings-rates" }, el("table", {},
+        el("thead", {}, el("tr", {},
+          el("th", {}, t("Currency")), el("th", {}, t("Rate per 1 USD")), el("th", {}, ""))),
+        tb)));
+    } else {
+      card.append(el("div", { class: "empty" }, t("No currencies yet — add one below.")));
+    }
+
+    card.append(el("p", { class: "field-hint" },
+      t("Rates auto-refresh once a day from a free public API (exchangerate-api, with fallbacks). Only the currencies listed here are updated.")));
+
+    const actions = el("div", { class: "settings-actions" },
+      el("button", { class: "btn btn-ghost", type: "button",
+        onclick: () => { state.rows.push({ code: "", rate: "" }); draw(); } }, t("+ Add currency")),
+      el("button", { class: "btn btn-signal", type: "button", onclick: save }, t("Save")),
+    );
+    if (state.rows.length) {
+      actions.append(el("button", { class: "btn btn-ghost", type: "button", onclick: refresh }, t("Refresh rates now")));
+    }
+    actions.append(el("button", { class: "btn btn-ghost", type: "button", onclick: resetDefaults }, t("Restore common currencies")));
+    card.append(actions);
+  }
+
+  async function save() {
+    const rates = {};
+    for (const r of state.rows) {
+      const code = (r.code || "").trim().toUpperCase();
+      if (!code) continue;
+      if (code === "USD") { toast(t("USD is the base currency — it's always 1."), true); return; }
+      const rate = Number(r.rate);
+      if (!(rate > 0)) { toast(t("Rates must be positive numbers."), true); return; }
+      rates[code] = rate;
+    }
+    let display = state.display;
+    if (display !== "USD" && !(display in rates)) display = "USD";
+    try {
+      const res = await api("PUT", "/admin/settings/currency", { rates, display });
+      SETTINGS.currency = res.currency;
+      state.rows = Object.entries(SETTINGS.currency.rates || {}).map(([c, rt]) => ({ code: c, rate: String(rt) }));
+      state.display = SETTINGS.currency.display || "USD";
+      toast(t("Settings saved"));
+      draw();
+    } catch (e) { toast(e.message, true); }
+  }
+
+  async function refresh() {
+    try {
+      const res = await api("POST", "/admin/settings/currency/refresh");
+      if (res.currency) {
+        SETTINGS.currency = res.currency;
+        state.rows = Object.entries(SETTINGS.currency.rates || {}).map(([c, rt]) => ({ code: c, rate: String(rt) }));
+        state.display = SETTINGS.currency.display || "USD";
+      }
+      toast(res.updated ? t("Rates updated.") : t("No rates changed (sources unavailable or nothing to update)."), !res.updated);
+      draw();
+    } catch (e) { toast(e.message, true); }
+  }
+
+  async function resetDefaults() {
+    if (state.rows.length && !confirm(t("Replace the current list with the common-currency defaults?"))) return;
+    try {
+      const res = await api("POST", "/admin/settings/currency/reset-defaults");
+      if (res.currency) {
+        SETTINGS.currency = res.currency;
+        state.rows = Object.entries(SETTINGS.currency.rates || {}).map(([c, rt]) => ({ code: c, rate: String(rt) }));
+        state.display = SETTINGS.currency.display || "USD";
+      }
+      toast(t("Common currencies restored."));
+      draw();
+    } catch (e) { toast(e.message, true); }
+  }
+
+  draw();
+  return card;
 }
 
 // ------------------------------------------------------------------ modal / forms
@@ -1169,13 +1509,14 @@ function resetModalChrome() {
 }
 
 // ------------------------------------------------------------------ auth / boot
-function showApp() {
+async function showApp() {
   $("#login").hidden = true;
   $("#app").hidden = false;
   $("#status-text").textContent = location.host;
   // Only the master may manage users — hide the nav entry otherwise.
   const usersNav = document.querySelector('.nav-item[data-route="users"]');
   if (usersNav) usersNav.style.display = IS_MASTER ? "" : "none";
+  await loadSettings();
   renderView(location.hash.slice(1) || "overview");
 }
 function logout() {
@@ -1207,7 +1548,7 @@ async function tryLogin(username, secret) {
   }
   sessionStorage.setItem(KEY_STORE, MASTER);
   sessionStorage.setItem(ROLE_STORE, String(IS_MASTER));
-  showApp();
+  await showApp();
 }
 
 function wire() {
@@ -1252,7 +1593,7 @@ function wire() {
   wire();
   applyStaticI18n();
   if (MASTER) {
-    try { await api("GET", "/admin/providers/provider-types"); showApp(); }
+    try { await api("GET", "/admin/providers/provider-types"); await showApp(); }
     catch { logout(); }
   } else {
     $("#login").hidden = false;
