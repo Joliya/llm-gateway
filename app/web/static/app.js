@@ -85,7 +85,7 @@ const I18N = {
     "Requests / min": "每分钟请求数", "Tokens / min": "每分钟 Token 数", "Extra headers": "额外请求头",
     "Load balancing": "负载均衡策略", "Fallback aliases": "降级别名", "Response cache": "响应缓存",
     "Credential": "凭证", "Pinned params": "写死参数", "Default params": "默认参数",
-    "Drop params": "丢弃参数", "Input price / 1M tokens": "输入价 / 百万 Token",
+    "Drop params": "丢弃参数", "Dialect": "方言", "Input price / 1M tokens": "输入价 / 百万 Token",
     "Output price / 1M tokens": "输出价 / 百万 Token", "Allowed models": "允许的模型",
     "Budget": "预算", "Budget period": "预算周期", "Expires": "过期时间",
     // hints
@@ -101,6 +101,9 @@ const I18N = {
     'Forced over client values, e.g. {"temperature": 0}.': '强制覆盖客户端传值，例如 {"temperature": 0}。',
     "Filled only when the client omits them.": "仅在客户端未传时填充。",
     "Param names to strip before the upstream call.": "上游调用前要剔除的参数名。",
+    "Thinking-translation dialect. Leave on auto to detect from the base URL; set it explicitly for aggregators (zenmux, openrouter) whose URL hides the real provider.":
+      "思考翻译方言。留空（auto）按 base URL 自动识别；接聚合器（zenmux、openrouter）等 URL 看不出真实厂商的端点时请显式指定。",
+    "auto (detect from base URL)": "自动（按 base URL 识别）",
     "Alias names or provider prefixes. * allows everything.": "别名或供应商前缀。* 表示全部允许。",
     "Max spend per period. Blank = unlimited.": "每个周期的最大花费。留空 = 不限。",
     // overview
@@ -345,6 +348,7 @@ const SCHEMAS = {
       { key: "alias_id", label: "Alias", fmt: (v) => fmt.aliasName(v), cls: "cell-strong" },
       { key: "credential_id", label: "Credential", fmt: (v) => fmt.credName(v) },
       { key: "upstream_model", label: "Upstream model", cls: "cell-amber" },
+      { key: "dialect", label: "Dialect", fmt: (v) => v || "auto", cls: "cell-muted" },
       { key: "weight", label: "Weight" },
       { key: "input_price", label: "In $/M", fmt: (v) => String(v) },
       { key: "output_price", label: "Out $/M", fmt: (v) => String(v) },
@@ -354,6 +358,7 @@ const SCHEMAS = {
       { name: "alias_id", label: "Alias", type: "select", required: true, createOnly: true, options: () => ref.aliases.map((a) => ({ value: a.id, label: a.name })) },
       { name: "credential_id", label: "Credential", type: "select", required: true, options: () => ref.credentials.map((c) => ({ value: c.id, label: c.name + " · " + fmt.providerName(c.provider_id) })) },
       { name: "upstream_model", label: "Upstream model", type: "text", required: true, hint: "The provider's model id, e.g. gpt-4o, moonshot-v1-8k." },
+      { name: "dialect", label: "Dialect", type: "select", optional: true, hint: "Thinking-translation dialect. Leave on auto to detect from the base URL; set it explicitly for aggregators (zenmux, openrouter) whose URL hides the real provider.", options: () => [{ value: "", label: "auto (detect from base URL)" }].concat(["openai", "openrouter", "anthropic", "google", "qwen", "deepseek", "volc", "moonshot", "minimax", "glm"].map((d) => ({ value: d, label: d }))) },
       { name: "weight", label: "Weight", type: "number", default: 1 },
       { name: "rpm_limit", label: "Requests / min", type: "number" },
       { name: "tpm_limit", label: "Tokens / min", type: "number" },
@@ -1084,6 +1089,7 @@ function collectForm() {
       continue;
     }
     if (f.type === "datetime-local") { out[f.name] = raw === "" ? null : new Date(raw).toISOString(); continue; }
+    if (f.optional && raw === "") { out[f.name] = null; continue; }
     out[f.name] = raw;
   }
   return out;

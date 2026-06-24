@@ -97,6 +97,10 @@ class Deployment(Base):
     alias_id: Mapped[int] = mapped_column(ForeignKey("aliases.id", ondelete="CASCADE"), index=True)
     credential_id: Mapped[int] = mapped_column(ForeignKey("credentials.id", ondelete="CASCADE"), index=True)
     upstream_model: Mapped[str] = mapped_column(String(200))
+    # Optional explicit thinking-translation dialect (openai|qwen|deepseek|volc|
+    # kimi). Overrides base_url auto-detection — needed for aggregators (zenmux,
+    # openrouter, …) whose base_url doesn't reveal the real backend provider.
+    dialect: Mapped[str | None] = mapped_column(String(50), nullable=True)
     weight: Mapped[int] = mapped_column(Integer, default=1)
     rpm_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tpm_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)

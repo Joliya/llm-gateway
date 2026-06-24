@@ -4,12 +4,14 @@ from app.providers.anthropic import AnthropicAdapter
 from app.providers.base import ProviderAdapter
 from app.providers.gemini import GeminiAdapter
 from app.providers.openai_compat import OpenAICompatAdapter
+from app.providers.vertex import VertexAdapter
 
 _ADAPTERS: dict[str, ProviderAdapter] = {
     "openai_compat": OpenAICompatAdapter(),
     "openai": OpenAICompatAdapter(),  # alias
     "anthropic": AnthropicAdapter(),
-    "gemini": GeminiAdapter(),
+    "gemini": GeminiAdapter(),         # Gemini via AI Studio (API key)
+    "vertex": VertexAdapter(),         # Gemini via Vertex AI (OAuth or express)
 }
 
 

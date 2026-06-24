@@ -189,12 +189,12 @@ async def inline_remote_images(
     return out
 
 
-def _needs_inlining(provider_type: str, base_url: str | None) -> bool:
+def _needs_inlining(provider_type: str, base_url: str | None, dialect: str | None = None) -> bool:
     """Whether this provider needs remote image URLs converted to data URIs."""
     if provider_type == "gemini":
         return True  # Gemini only accepts inline image bytes
     if provider_type in ("openai", "openai_compat"):
-        return detect_openai_dialect(base_url) == "kimi"  # Kimi: base64 only
+        return detect_openai_dialect(base_url, dialect) == "moonshot"  # Kimi: base64 only
     return False  # openai/qwen/volc accept URLs; anthropic handles them in-adapter
 
 
@@ -212,7 +212,7 @@ async def normalize_images(client: httpx.AsyncClient, dep: Any, params: dict[str
     messages = params.get("messages")
     if not isinstance(messages, list) or not has_remote_images(messages):
         return
-    if not _needs_inlining(dep.provider_type, dep.base_url):
+    if not _needs_inlining(dep.provider_type, dep.base_url, getattr(dep, "dialect", None)):
         return
     params["messages"] = await inline_remote_images(
         client, messages,

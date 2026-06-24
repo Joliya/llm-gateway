@@ -25,10 +25,11 @@ class OpenAICompatAdapter(ProviderAdapter):
         headers.update(extra or {})
         return headers
 
-    def build_chat_request(self, *, base_url, api_key, org, extra_headers, upstream_model, params):
+    def build_chat_request(self, *, base_url, api_key, org, extra_headers, upstream_model,
+                           params, dialect=None):
         body = dict(params)
         body["model"] = upstream_model
-        apply_openai_compat(body, base_url)
+        apply_openai_compat(body, base_url, dialect)
         # Streaming responses omit token usage unless explicitly requested, which
         # would leave cost/usage logged as 0. Ask for the trailing usage chunk
         # (the executor already parses it) without clobbering a client's own opts.

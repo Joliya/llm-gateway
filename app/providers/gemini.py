@@ -83,7 +83,8 @@ class GeminiAdapter(ProviderAdapter):
             body["generationConfig"] = gen_config
         return body
 
-    def build_chat_request(self, *, base_url, api_key, org, extra_headers, upstream_model, params):
+    def build_chat_request(self, *, base_url, api_key, org, extra_headers, upstream_model,
+                           params, dialect=None):
         base = (base_url or DEFAULT_BASE_URL).rstrip("/")
         stream = bool(params.get("stream"))
         verb = "streamGenerateContent" if stream else "generateContent"

@@ -84,7 +84,8 @@ class AnthropicAdapter(ProviderAdapter):
                 body.pop(unsupported, None)
         return body
 
-    def build_chat_request(self, *, base_url, api_key, org, extra_headers, upstream_model, params):
+    def build_chat_request(self, *, base_url, api_key, org, extra_headers, upstream_model,
+                           params, dialect=None):
         base = (base_url or DEFAULT_BASE_URL).rstrip("/")
         return UpstreamRequest(
             method="POST",

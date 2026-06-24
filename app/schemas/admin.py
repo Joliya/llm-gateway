@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # --- Provider ---
 class ProviderCreate(BaseModel):
     name: str
-    provider_type: str = Field(description="openai_compat | anthropic | gemini")
+    provider_type: str = Field(description="openai_compat | anthropic | gemini | vertex")
     default_base_url: str | None = None
     # Price book for prefix routing: {"gpt-4o": {"input": 2.5, "output": 10}}
     model_prices: dict[str, Any] = Field(default_factory=dict)
@@ -107,6 +107,9 @@ class DeploymentCreate(BaseModel):
     alias_id: int
     credential_id: int
     upstream_model: str
+    # Explicit thinking dialect override (openai|qwen|deepseek|volc|kimi); set it
+    # for aggregator endpoints whose base_url hides the real backend provider.
+    dialect: str | None = None
     weight: int = 1
     rpm_limit: int | None = None
     tpm_limit: int | None = None
@@ -121,6 +124,7 @@ class DeploymentCreate(BaseModel):
 class DeploymentUpdate(BaseModel):
     upstream_model: str | None = None
     credential_id: int | None = None
+    dialect: str | None = None
     weight: int | None = None
     rpm_limit: int | None = None
     tpm_limit: int | None = None
@@ -138,6 +142,7 @@ class DeploymentOut(BaseModel):
     alias_id: int
     credential_id: int
     upstream_model: str
+    dialect: str | None
     weight: int
     rpm_limit: int | None
     tpm_limit: int | None

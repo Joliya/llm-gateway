@@ -14,7 +14,7 @@ def _dep(did: int, weight: int = 1):
 
     return ResolvedDeployment(
         deployment_id=did, alias_name="a", provider_name="p", provider_type="openai_compat",
-        upstream_model="m", base_url=None, api_key="k", org=None, extra_headers={},
+        upstream_model="m", base_url=None, dialect=None, api_key="k", org=None, extra_headers={},
         weight=weight, rpm_limit=None, tpm_limit=None, cred_rpm_limit=None,
         cred_tpm_limit=None, credential_id=did, pinned_params={}, default_params={},
         drop_params=[], input_price=0.0, output_price=0.0,
@@ -75,15 +75,16 @@ from app.providers.anthropic import AnthropicAdapter
 from app.providers.gemini import GeminiAdapter
 from app.providers.openai_compat import OpenAICompatAdapter
 from app.transform.reasoning import (
+    detect_dialect_from_model,
     detect_openai_dialect,
     normalize_level,
 )
 
 
-def _chat(adapter, base_url, params):
+def _chat(adapter, base_url, params, dialect=None):
     return adapter.build_chat_request(
         base_url=base_url, api_key="k", org=None, extra_headers={},
-        upstream_model="m", params=params,
+        upstream_model="m", params=params, dialect=dialect,
     ).json
 
 
@@ -101,10 +102,92 @@ def test_normalize_level():
 def test_dialect_detection():
     assert detect_openai_dialect("https://dashscope.aliyuncs.com/compatible-mode/v1") == "qwen"
     assert detect_openai_dialect("https://api.deepseek.com/v1") == "deepseek"
-    assert detect_openai_dialect("https://api.moonshot.cn/v1") == "kimi"
+    assert detect_openai_dialect("https://api.moonshot.cn/v1") == "moonshot"
     assert detect_openai_dialect("https://ark.cn-beijing.volces.com/api/v3") == "volc"
+    assert detect_openai_dialect("https://open.bigmodel.cn/api/paas/v4") == "glm"
+    assert detect_openai_dialect("https://api.minimaxi.com/v1") == "minimax"
     assert detect_openai_dialect("https://api.openai.com/v1") == "openai"
     assert detect_openai_dialect(None) == "openai"
+
+
+def test_detect_dialect_from_model():
+    # prefix-routing strings: vendor token in the model id picks the dialect
+    assert detect_dialect_from_model("zenmux/deepseek/deepseek-v4-flash") == "deepseek"
+    assert detect_dialect_from_model("zenmux/moonshotai/kimi-k2.6") == "moonshot"
+    assert detect_dialect_from_model("zenmux/z-ai/glm-4.6") == "glm"
+    assert detect_dialect_from_model("zenmux/anthropic/claude-sonnet-4.5") == "anthropic"
+    assert detect_dialect_from_model("zenmux/google/gemini-3-pro") == "google"
+    assert detect_dialect_from_model("openrouter/minimax/minimax-m3") == "minimax"
+    assert detect_dialect_from_model("kimi/moonshot-v1-8k") == "moonshot"
+    # no recognizable vendor token -> None (caller falls back to base_url)
+    assert detect_dialect_from_model("zenmux/some-unknown-model") is None
+    assert detect_dialect_from_model("openai/gpt-5") is None   # openai = the fallback
+    assert detect_dialect_from_model(None) is None
+
+
+def test_prefix_routing_dialect_precedence():
+    # Mirrors router._synthetic_alias_from_prefix: a base_url marker (provider-
+    # level) wins; only a markerless endpoint falls back to model-name inference.
+    def resolve(base_url, alias_name):
+        marker = detect_openai_dialect(base_url)
+        return marker if marker != "openai" else detect_dialect_from_model(alias_name)
+    # OpenRouter: marker wins even though the model id names a backend vendor
+    assert resolve("https://openrouter.ai/api/v1", "openrouter/deepseek/deepseek-v4") == "openrouter"
+    # ZenMux: markerless aggregator -> infer the backend vendor from the model id
+    assert resolve("https://zenmux.ai/api/v1", "zenmux/deepseek/deepseek-v4") == "deepseek"
+    assert resolve("https://zenmux.ai/api/v1", "zenmux/moonshotai/kimi-k2.6") == "moonshot"
+    # Direct vendor endpoint: its own marker
+    assert resolve("https://api.deepseek.com/v1", "deepseek/deepseek-chat") == "deepseek"
+
+
+def test_dialect_override_wins_over_base_url():
+    # Aggregator base_url (no provider marker) would auto-detect as "openai",
+    # but an explicit override identifies the real backend.
+    agg = "https://zenmux.ai/api/v1"
+    assert detect_openai_dialect(agg) == "openai"
+    assert detect_openai_dialect(agg, "moonshot") == "moonshot"
+    assert detect_openai_dialect(agg, "MOONSHOT") == "moonshot"   # case-insensitive
+    # Markerless dialects (anthropic/google) are reachable only via override.
+    assert detect_openai_dialect(agg, "anthropic") == "anthropic"
+    assert detect_openai_dialect(agg, "google") == "google"
+    # An override the registry doesn't know falls back to base_url detection.
+    assert detect_openai_dialect("https://api.deepseek.com/v1", "bogus") == "deepseek"
+
+
+def test_aggregator_deepseek_via_dialect_override():
+    # zenmux-hosted deepseek: the client's native thinking block is what the
+    # backend needs, but the openai fallback strips it (and would send an invalid
+    # reasoning_effort). The explicit dialect makes the gateway pass it through.
+    agg = "https://zenmux.ai/api/v1"
+    wrong = _chat(OpenAICompatAdapter(), agg, {"messages": [], "thinking": {"type": "enabled"}})
+    assert "thinking" not in wrong          # openai fallback drops the block
+    fixed = _chat(OpenAICompatAdapter(), agg,
+                  {"messages": [], "thinking": {"type": "enabled"}}, dialect="deepseek")
+    assert fixed["thinking"] == {"type": "enabled"}
+
+
+def test_openrouter_normalizes_to_reasoning_object():
+    # OpenRouter (normalizing relay): unified `reasoning` object, never a native
+    # thinking block, never reasoning_effort (sending both 400s some models).
+    base = "https://openrouter.ai/api/v1"
+    on = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "high"})
+    assert on["reasoning"] == {"effort": "high"}
+    assert "reasoning_effort" not in on and "thinking" not in on
+    mn = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "minimal"})
+    assert mn["reasoning"] == {"effort": "low"}        # minimal -> low
+    mx = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "max"})
+    assert mx["reasoning"] == {"effort": "high"}       # xhigh/max -> high
+    off = _chat(OpenAICompatAdapter(), base, {"messages": [], "thinking": {"type": "disabled"}})
+    assert off["reasoning"] == {"enabled": False}
+    assert "thinking" not in off
+    # a backend-native thinking block is dropped (OpenRouter won't take it)
+    nat = _chat(OpenAICompatAdapter(), base, {"messages": [], "thinking": {"type": "enabled"}})
+    assert "thinking" not in nat
+    # a client-supplied OpenRouter `reasoning` object is respected verbatim
+    cli = _chat(OpenAICompatAdapter(), base,
+                {"messages": [], "reasoning": {"max_tokens": 2000}, "reasoning_effort": "low"})
+    assert cli["reasoning"] == {"max_tokens": 2000}
+    assert "reasoning_effort" not in cli
 
 
 def test_openai_keeps_reasoning_effort():
@@ -154,8 +237,8 @@ def test_volc_maps_to_reasoning_effort():
     assert "reasoning_effort" not in tog
 
 
-def test_kimi_maps_to_thinking_toggle():
-    # Kimi has no effort levels: any active level -> thinking enabled, effort dropped
+def test_moonshot_maps_to_thinking_toggle():
+    # Moonshot/Kimi has no effort levels: any active level -> thinking enabled
     on = _chat(OpenAICompatAdapter(), "https://api.moonshot.cn/v1",
                {"messages": [], "reasoning_effort": "high"})
     assert on["thinking"] == {"type": "enabled"}
@@ -163,13 +246,69 @@ def test_kimi_maps_to_thinking_toggle():
     off = _chat(OpenAICompatAdapter(), "https://api.moonshot.cn/v1",
                 {"messages": [], "reasoning_effort": "none"})
     assert off["thinking"] == {"type": "disabled"}
-    # nothing specified -> leave it to Kimi's default (thinking on); no field added
+    # nothing specified -> leave it to the model default (thinking on); no field
     bare = _chat(OpenAICompatAdapter(), "https://api.moonshot.cn/v1", {"messages": []})
     assert "thinking" not in bare
     # native block with extras (preserved thinking) respected verbatim
     native = _chat(OpenAICompatAdapter(), "https://api.moonshot.cn/v1",
                    {"messages": [], "thinking": {"type": "enabled", "keep": "all"}})
     assert native["thinking"] == {"type": "enabled", "keep": "all"}
+
+
+def test_glm_maps_to_thinking_toggle():
+    base = "https://open.bigmodel.cn/api/paas/v4"
+    on = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "high"})
+    assert on["thinking"] == {"type": "enabled"}
+    assert "reasoning_effort" not in on
+    off = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "none"})
+    assert off["thinking"] == {"type": "disabled"}
+    bare = _chat(OpenAICompatAdapter(), base, {"messages": []})
+    assert "thinking" not in bare
+
+
+def test_minimax_maps_to_adaptive_thinking():
+    # MiniMax M3: active level -> {type: adaptive} (no "enabled"); none -> disabled
+    base = "https://api.minimaxi.com/v1"
+    on = _chat(OpenAICompatAdapter(), base, {"messages": [], "reasoning_effort": "high"})
+    assert on["thinking"] == {"type": "adaptive"}
+    assert "reasoning_effort" not in on
+    off = _chat(OpenAICompatAdapter(), base, {"messages": [], "thinking": {"type": "disabled"}})
+    assert off["thinking"] == {"type": "disabled"}     # client block respected
+    bare = _chat(OpenAICompatAdapter(), base, {"messages": []})
+    assert "thinking" not in bare
+
+
+def test_anthropic_dialect_via_override():
+    # Markerless: only via explicit override (e.g. Claude behind an aggregator).
+    agg = "https://zenmux.ai/api/v1"
+    on = _chat(OpenAICompatAdapter(), agg, {"messages": [], "reasoning_effort": "high"},
+               dialect="anthropic")
+    assert on["thinking"]["type"] == "enabled"
+    assert on["thinking"]["budget_tokens"] > 0
+    assert "reasoning_effort" not in on
+    off = _chat(OpenAICompatAdapter(), agg, {"messages": [], "reasoning_effort": "none"},
+                dialect="anthropic")
+    assert "thinking" not in off
+    # native block carrying budget_tokens respected verbatim
+    native = _chat(OpenAICompatAdapter(), agg,
+                   {"messages": [], "thinking": {"type": "enabled", "budget_tokens": 5000}},
+                   dialect="anthropic")
+    assert native["thinking"] == {"type": "enabled", "budget_tokens": 5000}
+
+
+def test_google_dialect_via_override():
+    # Gemini via OpenAI-compat: reasoning_effort, "none" disables, xhigh/max -> high
+    agg = "https://zenmux.ai/api/v1"
+    on = _chat(OpenAICompatAdapter(), agg, {"messages": [], "reasoning_effort": "medium"},
+               dialect="google")
+    assert on["reasoning_effort"] == "medium"
+    assert "thinking" not in on
+    mx = _chat(OpenAICompatAdapter(), agg, {"messages": [], "reasoning_effort": "max"},
+               dialect="google")
+    assert mx["reasoning_effort"] == "high"
+    off = _chat(OpenAICompatAdapter(), agg, {"messages": [], "reasoning_effort": "none"},
+                dialect="google")
+    assert off["reasoning_effort"] == "none"
 
 
 def test_openai_clamps_max_to_high():
@@ -286,6 +425,54 @@ def test_gemini_maps_to_thinking_config():
     off = _chat(GeminiAdapter(), None,
                 {"messages": [{"role": "user", "content": "hi"}], "reasoning_effort": "none"})
     assert off["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "minimal"
+
+
+def _vertex_req(base_url, params, api_key="tok"):
+    from app.providers.vertex import VertexAdapter
+    return VertexAdapter().build_chat_request(
+        base_url=base_url, api_key=api_key, org=None, extra_headers={},
+        upstream_model="gemini-3-pro", params=params,
+    )
+
+
+def test_vertex_express_uses_api_key_query():
+    # Express mode (global, no /projects/): API key as ?key=, no Authorization
+    req = _vertex_req("https://aiplatform.googleapis.com/v1/publishers/google/models",
+                      {"messages": [{"role": "user", "content": "hi"}]}, api_key="AIzaKEY")
+    assert req.url == ("https://aiplatform.googleapis.com/v1/publishers/google/models/"
+                       "gemini-3-pro:generateContent?key=AIzaKEY")
+    assert "Authorization" not in req.headers
+    # body still carries the shared Gemini shape
+    assert "contents" in req.json
+
+
+def test_vertex_standard_uses_bearer():
+    # Standard Vertex (base_url has /projects/): OAuth Bearer, no ?key=
+    base = ("https://us-central1-aiplatform.googleapis.com/v1/projects/myproj/"
+            "locations/us-central1/publishers/google/models")
+    req = _vertex_req(base, {"messages": [{"role": "user", "content": "hi"}]}, api_key="ya29.TOKEN")
+    assert req.url == f"{base}/gemini-3-pro:generateContent"
+    assert req.headers["Authorization"] == "Bearer ya29.TOKEN"
+    assert "key=" not in req.url
+
+
+def test_vertex_streaming_query_params():
+    # Streaming adds alt=sse; express also appends key
+    exp = _vertex_req("https://aiplatform.googleapis.com/v1/publishers/google/models",
+                      {"messages": [{"role": "user", "content": "hi"}], "stream": True}, api_key="K")
+    assert exp.url.endswith(":streamGenerateContent?alt=sse&key=K")
+    base = ("https://eu-aiplatform.googleapis.com/v1/projects/p/locations/eu/"
+            "publishers/google/models")
+    std = _vertex_req(base, {"messages": [{"role": "user", "content": "hi"}], "stream": True})
+    assert std.url.endswith(":streamGenerateContent?alt=sse")
+    assert "key=" not in std.url
+
+
+def test_vertex_thinking_reuses_gemini_config():
+    # Vertex shares Gemini's thinkingConfig translation
+    req = _vertex_req("https://aiplatform.googleapis.com/v1/publishers/google/models",
+                      {"messages": [{"role": "user", "content": "hi"}], "reasoning_effort": "high"})
+    assert req.json["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "high"
 
 
 # --- multimodal image handling ---

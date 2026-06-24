@@ -66,9 +66,14 @@ curl -s $BASE/admin/providers -H "$M" -H "$J" -d '{
 
 - `openai_compat` / `openai` — OpenAI 及所有兼容服务（Kimi/Moonshot、DeepSeek、通义/百炼·DashScope、火山方舟/豆包、vLLM、Ollama…），靠 `base_url` 区分。
 - `anthropic` — Claude 原生 API（参数自动在 OpenAI ↔ Anthropic 间转换）。
-- `gemini` — Google Gemini（参数自动在 OpenAI ↔ Gemini 间转换）。
+- `gemini` — Google Gemini，走 **AI Studio**（`generativelanguage.googleapis.com`，API key 认证）。
+- `vertex` — Google Gemini，走 **Vertex AI**。请求体与 `gemini` 完全相同（共用 `thinkingConfig`），仅 URL/认证不同；按 base_url 是否含 `/projects/` 自动选认证：
+  - **Express 模式**（base_url 留空或为全局 `https://aiplatform.googleapis.com/v1/publishers/google/models`）→ API key 走 `?key=`，最省事。
+  - **标准 Vertex**（base_url 形如 `https://{region}-aiplatform.googleapis.com/v1/projects/{PROJ}/locations/{region}/publishers/google/models`）→ OAuth `Authorization: Bearer {api_key}`，此时 `api_key` 须填一个**有效的 access token**。网关零 SDK 依赖、**不会自动续期 token**，token 过期需自行更新或前置一个续 token 的代理。
 
 > 接 Kimi：再建一个 Provider，`name=kimi`，`provider_type=openai_compat`，`default_base_url=https://api.moonshot.cn/v1`。
+>
+> 接 Vertex Express：建 Provider，`provider_type=vertex`，`default_base_url` 留空（默认全局端点），Credential 的 `api_key` 填 Vertex Express API key 即可。
 
 ### 1.2 创建 Credential（API Key 加密存储）
 
@@ -126,6 +131,8 @@ curl -s $BASE/admin/deployments -H "$M" -H "$J" -d '{
 > 想让同一个 `gpt-4o-balanced` 同时打到 OpenAI 和 Azure？再建一个 Deployment，`alias_id` 相同、换 `credential_id` 与 `upstream_model` 即可——这就是负载均衡的本质。
 
 `input_price`/`output_price` 为每百万 token 单价，用于成本统计。
+
+> **`dialect`（可选）** —— 显式指定该部署的思考翻译方言（`openai`/`anthropic`/`google`/`qwen`/`deepseek`/`volc`/`moonshot`/`minimax`/`glm`），覆盖按 base_url 的自动识别。**接聚合器时必填**：zenmux、openrouter、one-api 这类平台的 base_url 指向聚合器自身、看不出背后真实厂商，自动识别会误判成 `openai`，把上游要的原生 `thinking` 块丢掉。例如接 zenmux 上的 deepseek，就在该 Deployment 上设 `"dialect": "deepseek"`（实测 ZenMux 按各厂商原生参数控制思考）。直连官方端点时留空即可（靠 base_url 自动识别）。
 
 ### 1.5 签发 Virtual Key（发给客户端）
 
@@ -310,7 +317,12 @@ client.chat.completions.create(
 | **通义 / Qwen**（base_url 含 `dashscope`/`aliyuncs`） | `enable_thinking: true` + `thinking_budget: N` | `enable_thinking: false` |
 | **DeepSeek**（base_url 含 `deepseek`） | `thinking: {type:"enabled"}` + `reasoning_effort: "high"`（`max` 档 → `"max"`） | `thinking: {type:"disabled"}`（上游默认开启，需显式关闭） |
 | **火山方舟 / 豆包**（base_url 含 `volces`/`volcengine`） | `reasoning_effort`（Seed 2.0：minimal/low/medium/high；xhigh/max → high）；若客户端传了 `thinking` 开关则保留它 | `reasoning_effort: "minimal"`（火山以 minimal 表示不思考） |
-| **Kimi / Moonshot**（base_url 含 `moonshot`） | `thinking: {type:"enabled"}`（无等级，任意档 → 开）；若客户端传了 `thinking` 块则保留它 | `thinking: {type:"disabled"}` |
+| **Moonshot / Kimi**（base_url 含 `moonshot`） | `thinking: {type:"enabled"}`（无等级，任意档 → 开）；若客户端传了 `thinking` 块则保留它 | `thinking: {type:"disabled"}` |
+| **智谱 / GLM**（base_url 含 `bigmodel`/`z.ai`） | `thinking: {type:"enabled"}`（无等级，开启后强制思考）；客户端 `thinking` 块原样保留 | `thinking: {type:"disabled"}` |
+| **MiniMax**（base_url 含 `minimax`） | `thinking: {type:"adaptive"}`（M3：无等级、无 "enabled"，由模型自适应；M2.x 思考强制常开、toggle 被忽略） | `thinking: {type:"disabled"}` |
+| **Anthropic（经兼容层）**（dialect 显式指定） | `thinking: {type:"enabled", budget_tokens:N}` | 省略 `thinking` 块 |
+| **Google / Gemini（经兼容层）**（dialect 显式指定） | `reasoning_effort`（minimal/low/medium/high；xhigh/max → high） | `reasoning_effort: "none"`（仅 2.5 可关，Pro/3 忽略） |
+| **OpenRouter**（base_url 含 `openrouter`） | `reasoning: {effort}`（minimal→low，xhigh/max→high）；**归一化中转，不发原生 thinking 块、不发 reasoning_effort**（二者同发会 400） | `reasoning: {enabled: false}` |
 
 各等级对应的 token 预算（budget-based 供应商）。Gemini 不在此表 —— 它用 `thinkingLevel` 枚举（minimal/low/medium/high），不吃 token 预算：
 
@@ -326,11 +338,17 @@ client.chat.completions.create(
 要点：
 
 - **DeepSeek 用请求级开关**（如 `deepseek-v4-pro`，参见[官方文档](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode)）：默认开启思考，网关把 `none` 映射为 `thinking:{type:"disabled"}` 来关闭；其余等级开启思考并下发 `reasoning_effort`（DeepSeek 只接受 `high`/`max`，低于 high 的等级归一到 `high`）。
-- **Kimi 用 `thinking` 开关**（k2.5/k2.6 等）：无等级，网关把任意非 `none` 等级映射成 `thinking:{type:"enabled"}`、`none`/`disabled` 映射成 `thinking:{type:"disabled"}`；客户端没传则保持 Kimi 默认（思考开）。客户端自己传的 `thinking` 块（含 `keep:"all"` 这类保留思考的扩展）会被原样尊重。注意 `kimi-k2-thinking`、`kimi-k2.7-code` 这类**只思考**的模型强制开启，对它们传 `disabled` 上游会直接报错——这是模型限制，网关不做特殊判断。
+- **Moonshot/Kimi 用 `thinking` 开关**（k2.5/k2.6 等）：无等级，网关把任意非 `none` 等级映射成 `thinking:{type:"enabled"}`、`none`/`disabled` 映射成 `thinking:{type:"disabled"}`；客户端没传则保持默认（思考开）。客户端自己传的 `thinking` 块（含 `keep:"all"` 这类保留思考的扩展）会被原样尊重。注意 `kimi-k2-thinking`、`kimi-k2.7-code` 这类**只思考**的模型强制开启,对它们传 `disabled` 上游会直接报错——这是模型限制,网关不做特殊判断。
+- **GLM / MiniMax 同属 `thinking` 开关族**：GLM（智谱 4.5/4.6/5.x）用 `thinking:{type:"enabled"/"disabled"}`，开启后强制思考；MiniMax M3 用 `thinking:{type:"adaptive"/"disabled"}`（**没有 `enabled`**，开启即交给模型自适应），M2.x 思考强制常开、toggle 被忽略。两者都尊重客户端自传的 `thinking` 块。
+- **Anthropic / Google 经兼容层时才用 dialect**：直连 Claude/Gemini 走各自的 `anthropic`/`gemini` 适配器（不读 dialect）。只有当你**经聚合器用 OpenAI 协议**访问它们时，才在该 Deployment 上显式设 `dialect=anthropic`（发 `thinking:{type:enabled,budget_tokens:N}`）或 `dialect=google`（发 `reasoning_effort`，`none` 关闭仅 2.5 有效）。这两个 dialect 没有 base_url 自动识别，只能显式指定。
 - **Gemini 统一用 `thinkingLevel`**：发枚举 `minimal/low/medium/high`（`xhigh`/`max` 收敛到 `high`，关闭取最低档 `minimal`），不发 `thinkingBudget`。`thinkingBudget` 是 2.5 时代的旧参数，官方在 Gemini 3 上已转向 `thinkingLevel`，故网关不再下发 budget、也不按模型版本分流。
 - **火山默认发 `reasoning_effort`**：当前 Seed 2.0 系列用 `reasoning_effort`（`minimal/low/medium/high`，`minimal` 即不思考；`xhigh`/`max` → `high`，`none`/`disabled` → `minimal`），网关默认走这条。旧 Seed 1.6 用 `thinking` 开关（`enabled`/`disabled`/`auto`）—— 如果客户端**自己传了 `thinking` 块**，网关尊重它（含 `auto`）并删掉 `reasoning_effort`；二者不同时下发。
 - **思考内容不混入答案**：Anthropic 的 thinking 块、Gemini 的 thought parts 在归一化时被过滤，`choices[].message.content` 只含最终答案。
 - **可写死在部署上**：把 `reasoning_effort` 放进 Deployment 的 `pinned_params`（强制）或 `default_params`（客户端没传才补），就能做出 `claude-think-high` / `claude-fast` 这种「等级即别名」的模型，客户端连字段都不用传。识别厂商用的是该部署凭证的 base_url，所以同一别名下挂不同厂商的部署也能各自正确翻译。
+- **dialect 是一条「优先级阶梯」，自动落在合适的层级**：解析顺序为 **① 部署显式 `dialect` → ② base_url marker → ③ 模型名推断（仅前缀路由）→ ④ openai 默认**。这正好对应两类中转站：
+  - **归一化型中转（OpenRouter）= provider 级**：它有稳定可识别的 base_url（`openrouter.ai`），落在 ②，**所有模型自动走 `openrouter` 格式（发统一 `reasoning` 对象），零 per-model 配置**。OpenRouter 不吃各厂商原生 `thinking` 块,只认自己的 `reasoning:{effort|max_tokens|enabled}`,且 `reasoning` 与 `reasoning_effort` 同发会 400 —— 网关已按此只发 `reasoning`。
+  - **透传型中转（ZenMux / one-api / new-api）= model 级**：base_url 藏住了后端厂商（② 命中不了），掉到 ③ 按模型名推断真实厂商（`zenmux/deepseek/…`→`deepseek`），或在该 Deployment 上 ① 显式设。ZenMux 实测按各厂商原生参数控制思考（`thinking:{type:enabled}` 原样透传）。
+- **可选值**：`openai` / `openrouter` / `anthropic` / `google` / `qwen` / `deepseek` / `volc` / `moonshot` / `minimax` / `glm`。直连官方端点留空即可（靠 ② 自动识别）；接 ZenMux 上的 deepseek 设 `dialect=deepseek`；接 OpenRouter 则**什么都不用设**（base_url 自动命中）。自建的归一化中转跑在自定义域名（② 认不出、③ 会误判成后端厂商）时，在该部署上显式设 `dialect=openrouter`。
 
 ### 2.8 多模态图片（vision）
 

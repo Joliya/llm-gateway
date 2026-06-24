@@ -41,6 +41,7 @@ class ProviderAdapter:
         extra_headers: dict[str, str],
         upstream_model: str,
         params: dict[str, Any],
+        dialect: str | None = None,
     ) -> UpstreamRequest:
         raise NotImplementedError
 

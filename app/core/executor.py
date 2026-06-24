@@ -165,6 +165,7 @@ class ChatExecutor:
             req = adapter.build_chat_request(
                 base_url=dep.base_url, api_key=dep.api_key, org=dep.org,
                 extra_headers=dep.extra_headers, upstream_model=dep.upstream_model, params=params,
+                dialect=dep.dialect,
             )
             last_dep, last_url, last_req, last_resp = dep, req.url, req.json, None
             incr_inflight(dep.deployment_id)
@@ -236,6 +237,7 @@ class ChatExecutor:
             req = adapter.build_chat_request(
                 base_url=dep.base_url, api_key=dep.api_key, org=dep.org,
                 extra_headers=dep.extra_headers, upstream_model=dep.upstream_model, params=params,
+                dialect=dep.dialect,
             )
             last_dep, last_url, last_req = dep, req.url, req.json
             cm = self.client.stream(

@@ -25,6 +25,7 @@ class ResolvedDeployment:
     provider_type: str
     upstream_model: str
     base_url: str | None
+    dialect: str | None
     api_key: str
     org: str | None
     extra_headers: dict[str, str]
@@ -163,6 +164,7 @@ class ConfigStore:
             provider_type=prov.provider_type,
             upstream_model=d.upstream_model,
             base_url=cred.base_url or prov.default_base_url,
+            dialect=d.dialect,
             api_key=decrypt_secret(cred.api_key_enc),
             org=cred.org,
             extra_headers=dict(cred.extra_headers or {}),

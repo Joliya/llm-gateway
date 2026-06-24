@@ -12,11 +12,15 @@ level was given). These map to each provider as:
 
     OpenAI / GPT-5 / o-series   reasoning_effort: "minimal" | "low" | "medium" | "high"
     Anthropic (Claude)          thinking: {type: "enabled", budget_tokens: N}
-    Gemini (2.5)                generationConfig.thinkingConfig: {thinkingBudget: N}
+    Gemini (native adapter)     generationConfig.thinkingConfig: {thinkingLevel: ...}
+    Gemini (OpenAI-compat)      reasoning_effort: "minimal".."high"; "none" disables (2.5)
     Qwen / 通义 (DashScope)      enable_thinking: bool + thinking_budget: N
     DeepSeek                    thinking: {type: "enabled"|"disabled"} + reasoning_effort: "high"|"max"
     Volcengine / 火山方舟 (豆包)   reasoning_effort (Seed 2.0); thinking: {type} respected (Seed 1.6)
-    Kimi / Moonshot             thinking: {type: "enabled"|"disabled"}  (on/off only, no levels)
+    Moonshot / Kimi             thinking: {type: "enabled"|"disabled"}  (on/off only, no levels)
+    Zhipu / GLM                 thinking: {type: "enabled"|"disabled"}  (on/off only, no levels)
+    MiniMax (M3)                thinking: {type: "adaptive"|"disabled"}  (no levels; M2.x always on)
+    OpenRouter (relay)          reasoning: {effort: ...} / {enabled: false}  (its own unified obj)
 
 If the client already sent the *provider's own* native thinking parameter
 (e.g. ``enable_thinking`` for Qwen, a ``thinking`` block for DeepSeek/Volc),
@@ -144,9 +148,19 @@ def register_dialect(name: str, markers: tuple[str, ...] = ()) -> Callable[..., 
     return deco
 
 
-def detect_openai_dialect(base_url: str | None) -> str:
-    """Identify which OpenAI-compatible vendor a base_url points at by matching
-    registered dialect markers. Unknown endpoints default to ``openai``."""
+def detect_openai_dialect(base_url: str | None, override: str | None = None) -> str:
+    """Identify which OpenAI-compatible dialect a deployment speaks.
+
+    An explicit ``override`` (the deployment's configured ``dialect``) always
+    wins — this is the only reliable signal for aggregators (zenmux, openrouter,
+    one-api, …) whose base_url points at the gateway, not the real backend, so
+    marker matching can't tell a Kimi model from an OpenAI one. With no override,
+    fall back to matching registered markers against the base_url; unknown
+    endpoints default to ``openai``."""
+    if override:
+        name = override.strip().lower()
+        if name in _DIALECTS:
+            return name
     url = (base_url or "").lower()
     for d in _DIALECTS.values():
         if d.markers and any(m in url for m in d.markers):
@@ -154,14 +168,52 @@ def detect_openai_dialect(base_url: str | None) -> str:
     return "openai"
 
 
-def apply_openai_compat(body: dict[str, Any], base_url: str | None) -> None:
+# Vendor tokens that identify a dialect from a `provider/model` routing string.
+# Used only by prefix routing (`provider/model` form), which synthesizes a
+# deployment on the fly and so has no stored `dialect` to carry. Conservative
+# substring match against known vendor names; no match -> fall back to base_url
+# detection. openai is intentionally absent: an unmatched string already falls
+# back to the openai default, so listing it would be redundant.
+_MODEL_DIALECT_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("anthropic", ("claude", "anthropic")),
+    ("google", ("gemini", "google")),
+    ("deepseek", ("deepseek",)),
+    ("moonshot", ("moonshot", "kimi")),
+    ("qwen", ("qwen", "tongyi", "qwq")),
+    ("minimax", ("minimax", "abab")),
+    ("glm", ("glm", "zhipu", "chatglm", "z-ai")),
+    ("volc", ("doubao", "volcengine", "volc")),
+)
+
+
+def detect_dialect_from_model(text: str | None) -> str | None:
+    """Best-effort dialect from a ``provider/model`` routing string.
+
+    Prefix routing (e.g. ``zenmux/deepseek/deepseek-v4-flash``) has no stored
+    deployment to carry an explicit ``dialect``, and an aggregator's base_url
+    reveals nothing — but the model id usually names the real vendor. Match known
+    vendor tokens; return ``None`` when none match so the caller falls back to
+    base_url detection (which yields ``openai`` for unknown endpoints)."""
+    if not text:
+        return None
+    s = text.lower()
+    for name, aliases in _MODEL_DIALECT_ALIASES:
+        if any(a in s for a in aliases):
+            return name
+    return None
+
+
+def apply_openai_compat(body: dict[str, Any], base_url: str | None,
+                        dialect: str | None = None) -> None:
     """Translate the canonical thinking controls in-place into the native fields
-    of the dialect ``base_url`` points at. If the client already supplied the
-    provider's own native parameter it is respected (only foreign canonical
-    fields the provider would reject are stripped)."""
-    dialect = _DIALECTS.get(detect_openai_dialect(base_url))
-    if dialect is not None:
-        dialect.apply(body)
+    of the deployment's dialect. ``dialect`` is the deployment's explicit
+    override (use it for aggregators); without it the dialect is auto-detected
+    from ``base_url``. If the client already supplied the provider's own native
+    parameter it is respected (only foreign canonical fields the provider would
+    reject are stripped)."""
+    d = _DIALECTS.get(detect_openai_dialect(base_url, dialect))
+    if d is not None:
+        d.apply(body)
 
 
 def _has_thinking_block(body: dict[str, Any]) -> bool:
@@ -182,6 +234,30 @@ def _apply_openai(body: dict[str, Any]) -> None:
         body.pop(CANONICAL_FIELD, None)
     else:
         body[CANONICAL_FIELD] = level if level in _OPENAI_LEVELS else "high"
+
+
+@register_dialect("openrouter", ("openrouter",))
+def _apply_openrouter(body: dict[str, Any]) -> None:
+    # OpenRouter is a NORMALIZING relay: it does not take vendor-native thinking
+    # blocks, only its own unified `reasoning` object ({effort|max_tokens|enabled}).
+    # Sending both `reasoning` and `reasoning_effort` 400s some models, so emit
+    # only `reasoning` and strip the rest. effort is low/medium/high (minimal ->
+    # low, xhigh/max -> high). Respect a client-supplied `reasoning` object.
+    if isinstance(body.get("reasoning"), dict):  # client gave the native param
+        body.pop(CANONICAL_FIELD, None)
+        body.pop("thinking", None)
+        return
+    level = resolve_level(body)
+    body.pop(CANONICAL_FIELD, None)
+    body.pop("thinking", None)
+    if level is None:
+        return
+    if level == "none":
+        body["reasoning"] = {"enabled": False}
+    else:
+        effort = "low" if level == "minimal" else (
+            level if level in ("low", "medium", "high") else "high")
+        body["reasoning"] = {"effort": effort}
 
 
 @register_dialect("qwen", ("dashscope", "aliyuncs"))
@@ -241,11 +317,11 @@ def _apply_volc(body: dict[str, Any]) -> None:
         level if level in _OPENAI_LEVELS else "high")
 
 
-@register_dialect("kimi", ("moonshot",))
-def _apply_kimi(body: dict[str, Any]) -> None:
-    # Kimi (k2.5/k2.6 …) toggles reasoning with a `thinking` block ({type:...}
-    # plus extras like keep:"all") — no effort levels. Thinking-only models force
-    # it on and reject "disabled" upstream. Respect a client-supplied block.
+@register_dialect("moonshot", ("moonshot",))
+def _apply_moonshot(body: dict[str, Any]) -> None:
+    # Moonshot/Kimi (k2.5/k2.6 …) toggles reasoning with a `thinking` block
+    # ({type:...} plus extras like keep:"all") — no effort levels. Thinking-only
+    # models force it on and reject "disabled" upstream. Respect a client block.
     if _has_thinking_block(body):
         body.pop(CANONICAL_FIELD, None)
         return
@@ -255,6 +331,74 @@ def _apply_kimi(body: dict[str, Any]) -> None:
         body.pop("thinking", None)
         return
     body["thinking"] = {"type": "disabled" if level == "none" else "enabled"}
+
+
+@register_dialect("glm", ("bigmodel", "z.ai"))
+def _apply_glm(body: dict[str, Any]) -> None:
+    # Zhipu GLM (4.5/4.6/5.x): thinking {type: "enabled"|"disabled"} toggle;
+    # thinking is enforced once enabled, no effort levels. Respect a client block.
+    if _has_thinking_block(body):
+        body.pop(CANONICAL_FIELD, None)
+        return
+    level = resolve_level(body)
+    body.pop(CANONICAL_FIELD, None)
+    if level is None:
+        body.pop("thinking", None)
+        return
+    body["thinking"] = {"type": "disabled" if level == "none" else "enabled"}
+
+
+@register_dialect("minimax", ("minimax",))
+def _apply_minimax(body: dict[str, Any]) -> None:
+    # MiniMax-M3: thinking {type: "adaptive"|"disabled"}; on by default when
+    # omitted. No effort levels and no "enabled" variant — an active level maps to
+    # "adaptive" (model decides). M2.x ignores the toggle (thinking always on).
+    # Respect a client-supplied thinking block.
+    if _has_thinking_block(body):
+        body.pop(CANONICAL_FIELD, None)
+        return
+    level = resolve_level(body)
+    body.pop(CANONICAL_FIELD, None)
+    if level is None:
+        body.pop("thinking", None)
+        return
+    body["thinking"] = {"type": "disabled" if level == "none" else "adaptive"}
+
+
+@register_dialect("anthropic")
+def _apply_anthropic(body: dict[str, Any]) -> None:
+    # Claude via an OpenAI-compatible / aggregator endpoint takes the native
+    # thinking block {type:"enabled", budget_tokens:N}. No markers — reached only
+    # by an explicit dialect override (a direct Anthropic provider uses its own
+    # adapter). A client block carrying budget_tokens is respected; disable =
+    # omit the block.
+    native = body.get("thinking")
+    if isinstance(native, dict) and "budget_tokens" in native:
+        body.pop(CANONICAL_FIELD, None)
+        return
+    level = resolve_level(body)
+    body.pop(CANONICAL_FIELD, None)
+    if level is None:
+        return
+    if level == "none":
+        body.pop("thinking", None)
+    else:
+        body["thinking"] = {"type": "enabled", "budget_tokens": _ANTHROPIC_BUDGET[level]}
+
+
+@register_dialect("google")
+def _apply_google(body: dict[str, Any]) -> None:
+    # Gemini via an OpenAI-compatible endpoint uses reasoning_effort
+    # (minimal/low/medium/high); "none" disables thinking on 2.5 models (Pro/3
+    # ignore it). Higher canonical levels clamp to "high". No markers — reached
+    # only by an explicit dialect override (a direct Gemini provider uses its own
+    # adapter). No thinking block.
+    level = resolve_level(body)
+    body.pop("thinking", None)
+    if level is None:
+        return
+    body[CANONICAL_FIELD] = "none" if level == "none" else (
+        level if level in _OPENAI_LEVELS else "high")
 
 
 def anthropic_thinking(level: str | None) -> dict[str, Any] | None:

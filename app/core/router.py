@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config_store import ResolvedAlias, ResolvedDeployment, Snapshot, config_store
 from app.core.security import decrypt_secret
+from app.transform.reasoning import detect_dialect_from_model, detect_openai_dialect
 
 
 class RouteNotFound(Exception):
@@ -29,6 +30,13 @@ def _synthetic_alias_from_prefix(snapshot: Snapshot, provider_name: str, model: 
     input_price, output_price = snapshot.model_prices.get((provider.id, model), (0.0, 0.0))
     ra = ResolvedAlias(name=alias_name, lb_strategy="round_robin", fallback_aliases=[], cache_enabled=None)
     for cred in creds:
+        base_url = cred.base_url or provider.default_base_url
+        # No stored deployment to carry an explicit dialect. Prefer the base_url
+        # marker (provider-level: openrouter / direct vendor endpoints); only when
+        # the endpoint is unrecognizable (a markerless aggregator like zenmux that
+        # hides the backend) fall back to inferring the vendor from the model id.
+        marker = detect_openai_dialect(base_url)
+        dialect = marker if marker != "openai" else detect_dialect_from_model(alias_name)
         ra.deployments.append(
             ResolvedDeployment(
                 deployment_id=-cred.id,  # negative => synthetic, no DB deployment row
@@ -36,7 +44,8 @@ def _synthetic_alias_from_prefix(snapshot: Snapshot, provider_name: str, model: 
                 provider_name=provider.name,
                 provider_type=provider.provider_type,
                 upstream_model=model,
-                base_url=cred.base_url or provider.default_base_url,
+                base_url=base_url,
+                dialect=dialect,
                 api_key=decrypt_secret(cred.api_key_enc),
                 org=cred.org,
                 extra_headers=dict(cred.extra_headers or {}),
