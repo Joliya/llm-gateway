@@ -49,6 +49,40 @@ virtual keys with budgets, usage/cost logging, circuit breaking, and caching.
 
 ![llm-gateway console](docs/images/console.png)
 
+## Quick start (Docker)
+
+The fastest way to try it — no clone, no build. Pull the published image and run:
+
+```bash
+docker run -d --name llm-gateway -p 8000:8000 \
+  -e GW_MASTER_KEY="$(openssl rand -hex 32)" \
+  ghcr.io/joliya/llm-gateway:latest
+```
+
+That's enough to boot: the entrypoint runs migrations, then serves on `:8000`
+with a zero-config SQLite database. Grab the master key you generated
+(`docker logs` won't show it — set it to a value you keep) and open
+**http://localhost:8000/** to sign in.
+
+The SQLite file lives inside the container, so it's lost when the container is
+removed. To persist data across restarts, point the database at a mounted
+volume:
+
+```bash
+docker run -d --name llm-gateway -p 8000:8000 \
+  -e GW_MASTER_KEY="<your-long-random-key>" \
+  -e GW_DATABASE_URL="sqlite+aiosqlite:////data/llm_gateway.db" \
+  -v llm-gateway-data:/data \
+  ghcr.io/joliya/llm-gateway:latest
+```
+
+`GW_ENCRYPTION_KEY` is optional — if unset it's derived from `GW_MASTER_KEY`, so
+changing the master key later makes stored provider credentials unreadable. Set
+an explicit `GW_ENCRYPTION_KEY` if you want to rotate them independently.
+
+For a full stack with Postgres + Redis, use [`docker compose`](#production)
+instead. Release tags are also published: `ghcr.io/joliya/llm-gateway:0.1.0`.
+
 ## Quick start (local)
 
 ```bash
