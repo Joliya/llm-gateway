@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_admin
+from app.core.config_store import ResolvedAlias, config_store
 from app.core.cost import compute_cost
 from app.core.executor import AllAttemptsFailed, ChatExecutor, build_candidate_aliases
 from app.core.router import RouteNotFound
@@ -18,10 +19,53 @@ router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 class PlaygroundRequest(BaseModel):
-    model: str
+    model: str | None = None
+    deployment_id: int | None = None
     messages: list[dict[str, Any]]
     temperature: float | None = None
     max_tokens: int | None = None
+
+
+async def _resolve_playground_aliases(
+    session: AsyncSession,
+    payload: PlaygroundRequest,
+) -> list[ResolvedAlias] | JSONResponse:
+    has_model = bool(payload.model and payload.model.strip())
+    has_deployment = payload.deployment_id is not None
+    if has_model == has_deployment:
+        return JSONResponse(
+            {"error": {"message": "Provide exactly one of model or deployment_id", "type": "bad_request"}},
+            status_code=400,
+        )
+
+    if has_model:
+        try:
+            return await build_candidate_aliases(session, payload.model.strip())
+        except RouteNotFound as exc:
+            return JSONResponse({"error": {"message": str(exc), "type": "route_not_found"}}, status_code=404)
+
+    snapshot = await config_store.get(session)
+    for alias in snapshot.aliases.values():
+        for dep in alias.deployments:
+            if dep.deployment_id == payload.deployment_id:
+                return [
+                    ResolvedAlias(
+                        name=alias.name,
+                        lb_strategy="round_robin",
+                        fallback_aliases=[],
+                        cache_enabled=alias.cache_enabled,
+                        deployments=[dep],
+                    )
+                ]
+    return JSONResponse(
+        {
+            "error": {
+                "message": f"Deployment {payload.deployment_id!r} is not available",
+                "type": "route_not_found",
+            }
+        },
+        status_code=404,
+    )
 
 
 @router.post("/playground/chat")
@@ -33,16 +77,16 @@ async def playground_chat(
     """Run a non-streaming chat completion through the real routing path,
     authenticated by the master key (no virtual key / budget needed). Returns
     the response plus which deployment served it — a routing test bench."""
-    body: dict[str, Any] = {"model": payload.model, "messages": payload.messages}
+    aliases = await _resolve_playground_aliases(session, payload)
+    if isinstance(aliases, JSONResponse):
+        return aliases
+
+    model = payload.model.strip() if payload.model else aliases[0].name
+    body: dict[str, Any] = {"model": model, "messages": payload.messages}
     if payload.temperature is not None:
         body["temperature"] = payload.temperature
     if payload.max_tokens is not None:
         body["max_tokens"] = payload.max_tokens
-
-    try:
-        aliases = await build_candidate_aliases(session, payload.model)
-    except RouteNotFound as exc:
-        return JSONResponse({"error": {"message": str(exc), "type": "route_not_found"}}, status_code=404)
 
     executor = ChatExecutor(session, request.app.state.http_client, None, None, None)
     started = time.monotonic()

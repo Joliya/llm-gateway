@@ -402,6 +402,57 @@ async def test_playground_chat_returns_routing_meta(app_client):
     assert data["meta"]["provider_type"] == "openai_compat"
 
 
+@respx.mock
+async def test_playground_chat_can_target_one_deployment(app_client):
+    deployments = (await app_client.get(
+        "/admin/deployments",
+        headers={"Authorization": "Bearer test-master"},
+    )).json()
+    deployment_id = deployments[1]["id"]
+    respx.post("https://up.test/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=_openai_response("pong"))
+    )
+
+    r = await app_client.post(
+        "/admin/playground/chat",
+        headers={"Authorization": "Bearer test-master"},
+        json={"deployment_id": deployment_id, "messages": [{"role": "user", "content": "ping"}]},
+    )
+
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["meta"]["alias"] == "balanced"
+    assert data["meta"]["deployment_id"] == deployment_id
+    assert data["meta"]["retries"] == 0
+    assert respx.calls.last.request.headers["authorization"] == "Bearer k2"
+
+
+async def test_playground_chat_requires_one_target(app_client):
+    deployments = (await app_client.get(
+        "/admin/deployments",
+        headers={"Authorization": "Bearer test-master"},
+    )).json()
+    r = await app_client.post(
+        "/admin/playground/chat",
+        headers={"Authorization": "Bearer test-master"},
+        json={
+            "model": "balanced",
+            "deployment_id": deployments[0]["id"],
+            "messages": [{"role": "user", "content": "ping"}],
+        },
+    )
+    assert r.status_code == 400
+
+
+async def test_playground_chat_unknown_deployment(app_client):
+    r = await app_client.post(
+        "/admin/playground/chat",
+        headers={"Authorization": "Bearer test-master"},
+        json={"deployment_id": 999999, "messages": [{"role": "user", "content": "ping"}]},
+    )
+    assert r.status_code == 404
+
+
 async def test_playground_requires_master_key(app_client):
     # carries a virtual key, not the master key
     r = await app_client.post("/admin/playground/chat",

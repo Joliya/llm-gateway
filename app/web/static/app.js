@@ -9,7 +9,7 @@ let MASTER = sessionStorage.getItem(KEY_STORE) || "";
 // may manage users; this drives the UI (the backend enforces it regardless).
 let IS_MASTER = sessionStorage.getItem(ROLE_STORE) !== "false";
 let ROUTE = "overview";
-const ref = { providers: [], aliases: [], credentials: [], providerTypes: [] };
+const ref = { providers: [], aliases: [], credentials: [], deployments: [], providerTypes: [] };
 // Console-wide settings (loaded once at sign-in, refreshed after a save). All
 // monetary amounts are stored in USD; `currency` decides how they're displayed.
 let SETTINGS = { currency: { rates: {}, display: "USD" } };
@@ -163,6 +163,11 @@ const I18N = {
     "playground": "调试台", "Test bench": "测试台",
     "Send a request through the real routing path and see which deployment served it. Authenticated by the master key — virtual-key budgets and limits are bypassed.":
       "通过真实路由路径发送请求，查看由哪个部署处理。使用主密钥鉴权 —— 不受虚拟密钥的预算与限流约束。",
+    "Target type": "目标类型", "Manual provider/model": "手动 provider/model",
+    "Select an alias to use the normal load-balancing and fallback path.": "选择别名会使用正常负载均衡与降级路径。",
+    "Select one deployment to call it directly without fallback.": "选择一个部署会直接调用它，不执行降级。",
+    "No available deployments.": "没有可用部署。",
+    "No aliases configured.": "未配置别名。",
     "alias name or provider/model": "别名 或 provider/model",
     "Optional system prompt": "可选的系统提示词", "Your message": "你的消息",
     "Reply with a single word: ping.": "只回复一个词：ping。",
@@ -487,15 +492,17 @@ function budgetCell(r) {
 
 // ------------------------------------------------------------------ reference data
 async function loadRef() {
-  const [providers, aliases, credentials, ptypes] = await Promise.all([
+  const [providers, aliases, credentials, deployments, ptypes] = await Promise.all([
     api("GET", "/admin/providers"),
     api("GET", "/admin/aliases"),
     api("GET", "/admin/credentials"),
+    api("GET", "/admin/deployments"),
     api("GET", "/admin/providers/provider-types"),
   ]);
   ref.providers = providers || [];
   ref.aliases = aliases || [];
   ref.credentials = credentials || [];
+  ref.deployments = deployments || [];
   ref.providerTypes = (ptypes && ptypes.provider_types) || [];
 }
 
@@ -1079,9 +1086,31 @@ async function renderPlayground(content, crumb) {
     ))
   );
 
-  const datalist = el("datalist", { id: "pg-aliases" }, ...ref.aliases.map((a) => el("option", { value: a.name })));
-  const modelInput = el("input", { type: "text", id: "pg-model", list: "pg-aliases", placeholder: t("alias name or provider/model") });
-  if (ref.aliases[0]) modelInput.value = ref.aliases[0].name;
+  const availableDeployments = ref.deployments.filter((d) => {
+    const alias = ref.aliases.find((a) => a.id === d.alias_id);
+    const cred = ref.credentials.find((c) => c.id === d.credential_id);
+    const provider = cred ? ref.providers.find((p) => p.id === cred.provider_id) : null;
+    return d.enabled && (!alias || alias.enabled) && (!cred || cred.enabled) && (!provider || provider.enabled);
+  });
+  const deploymentLabel = (d) => `#${d.id} · ${fmt.aliasName(d.alias_id)} · ${fmt.credName(d.credential_id)} · ${d.upstream_model}`;
+  const targetType = el("select", { id: "pg-target-type" },
+    el("option", { value: "alias" }, t("Alias")),
+    el("option", { value: "deployment" }, t("Deployment")),
+    el("option", { value: "manual" }, t("Manual provider/model")),
+  );
+  const aliasSelect = el("select", { id: "pg-alias" },
+    ...(ref.aliases.length
+      ? ref.aliases.map((a) => el("option", { value: a.name }, a.name))
+      : [el("option", { value: "" }, t("No aliases configured."))]),
+  );
+  aliasSelect.disabled = !ref.aliases.length;
+  const deploymentSelect = el("select", { id: "pg-deployment" },
+    ...(availableDeployments.length
+      ? availableDeployments.map((d) => el("option", { value: d.id }, deploymentLabel(d)))
+      : [el("option", { value: "" }, t("No available deployments."))]),
+  );
+  deploymentSelect.disabled = !availableDeployments.length;
+  const modelInput = el("input", { type: "text", id: "pg-model", placeholder: t("alias name or provider/model") });
   const sysInput = el("textarea", { id: "pg-system", placeholder: t("Optional system prompt") });
   const userInput = el("textarea", { id: "pg-user", placeholder: t("Your message") }, t("Reply with a single word: ping."));
   const tempInput = el("input", { type: "number", id: "pg-temp", step: "any", placeholder: t("default") });
@@ -1093,12 +1122,15 @@ async function renderPlayground(content, crumb) {
 
   async function send(ev) {
     ev.preventDefault();
-    const model = modelInput.value.trim();
-    if (!model) return;
+    const mode = targetType.value;
+    const model = mode === "manual" ? modelInput.value.trim() : aliasSelect.value;
+    const deploymentId = Number(deploymentSelect.value);
+    if (mode === "deployment" && !deploymentId) return;
+    if (mode !== "deployment" && !model) return;
     const messages = [];
     if (sysInput.value.trim()) messages.push({ role: "system", content: sysInput.value });
     messages.push({ role: "user", content: userInput.value });
-    const body = { model, messages };
+    const body = mode === "deployment" ? { deployment_id: deploymentId, messages } : { model, messages };
     if (tempInput.value !== "") body.temperature = Number(tempInput.value);
     if (maxInput.value !== "") body.max_tokens = Number(maxInput.value);
 
@@ -1137,9 +1169,22 @@ async function renderPlayground(content, crumb) {
 
   const field = (label, ctrl, hint) => el("label", { class: "field" },
     el("span", { class: "field-label" }, label), ctrl, hint ? el("span", { class: "field-hint" }, hint) : null);
+  const aliasField = field(t("Alias"), aliasSelect, t("Select an alias to use the normal load-balancing and fallback path."));
+  const deploymentField = field(t("Deployment"), deploymentSelect, t("Select one deployment to call it directly without fallback."));
+  const manualField = field(t("Model"), modelInput, t("A configured alias, or provider/model like kimi/moonshot-v1-8k."));
+  function syncTargetFields() {
+    aliasField.hidden = targetType.value !== "alias";
+    deploymentField.hidden = targetType.value !== "deployment";
+    manualField.hidden = targetType.value !== "manual";
+  }
+  targetType.addEventListener("change", syncTargetFields);
+  syncTargetFields();
 
   const form = el("form", { class: "panel pg-form", onsubmit: send },
-    field(t("Model"), modelInput, t("A configured alias, or provider/model like kimi/moonshot-v1-8k.")),
+    field(t("Target type"), targetType),
+    aliasField,
+    deploymentField,
+    manualField,
     field(t("System"), sysInput),
     field(t("Message"), userInput),
     el("div", { class: "pg-row" },
